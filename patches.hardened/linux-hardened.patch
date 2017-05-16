@@ -374,6 +374,34 @@ index a164862d77e3..e219042b59a7 100644
  #endif
  
  __must_check int memcpy_mcsafe_unrolled(void *dst, const void *src, size_t cnt);
+diff --git a/arch/x86/include/asm/tlbflush.h b/arch/x86/include/asm/tlbflush.h
+index fc5abff9b7fd..2d0227eccd8e 100644
+--- a/arch/x86/include/asm/tlbflush.h
++++ b/arch/x86/include/asm/tlbflush.h
+@@ -90,6 +90,7 @@ static inline void cr4_set_bits(unsigned long mask)
+ 	unsigned long cr4;
+ 
+ 	cr4 = this_cpu_read(cpu_tlbstate.cr4);
++	BUG_ON(cr4 != __read_cr4());
+ 	if ((cr4 | mask) != cr4) {
+ 		cr4 |= mask;
+ 		this_cpu_write(cpu_tlbstate.cr4, cr4);
+@@ -103,6 +104,7 @@ static inline void cr4_clear_bits(unsigned long mask)
+ 	unsigned long cr4;
+ 
+ 	cr4 = this_cpu_read(cpu_tlbstate.cr4);
++	BUG_ON(cr4 != __read_cr4());
+ 	if ((cr4 & ~mask) != cr4) {
+ 		cr4 &= ~mask;
+ 		this_cpu_write(cpu_tlbstate.cr4, cr4);
+@@ -150,6 +152,7 @@ static inline void __native_flush_tlb_global_irq_disabled(void)
+ 	unsigned long cr4;
+ 
+ 	cr4 = this_cpu_read(cpu_tlbstate.cr4);
++	BUG_ON(cr4 != __read_cr4());
+ 	/* clear PGE */
+ 	native_write_cr4(cr4 & ~X86_CR4_PGE);
+ 	/* write old PGE again and flush TLBs */
 diff --git a/arch/x86/kernel/cpu/common.c b/arch/x86/kernel/cpu/common.c
 index 58094a1f9e9d..9a20ee0f127a 100644
 --- a/arch/x86/kernel/cpu/common.c
@@ -486,6 +514,28 @@ index ded2e8272382..86a7a08516ff 100644
  
  	/* Make the page containing the relocated code executable */
  	pgd = (pgd_t *)__va(read_cr3()) + pgd_index(relocated_restore_code);
+diff --git a/drivers/ata/libata-core.c b/drivers/ata/libata-core.c
+index ca75823697dd..0ae0e9674fdf 100644
+--- a/drivers/ata/libata-core.c
++++ b/drivers/ata/libata-core.c
+@@ -5039,7 +5039,7 @@ void ata_qc_free(struct ata_queued_cmd *qc)
+ 	struct ata_port *ap;
+ 	unsigned int tag;
+ 
+-	WARN_ON_ONCE(qc == NULL); /* ata_qc_from_tag _might_ return NULL */
++	BUG_ON(qc == NULL); /* ata_qc_from_tag _might_ return NULL */
+ 	ap = qc->ap;
+ 
+ 	qc->flags = 0;
+@@ -5056,7 +5056,7 @@ void __ata_qc_complete(struct ata_queued_cmd *qc)
+ 	struct ata_port *ap;
+ 	struct ata_link *link;
+ 
+-	WARN_ON_ONCE(qc == NULL); /* ata_qc_from_tag _might_ return NULL */
++	BUG_ON(qc == NULL); /* ata_qc_from_tag _might_ return NULL */
+ 	WARN_ON_ONCE(!(qc->flags & ATA_QCFLAG_ACTIVE));
+ 	ap = qc->ap;
+ 	link = qc->dev->link;
 diff --git a/drivers/net/ethernet/brocade/bna/bfa_ioc.c b/drivers/net/ethernet/brocade/bna/bfa_ioc.c
 index 0f6811860ad5..a36e38676640 100644
 --- a/drivers/net/ethernet/brocade/bna/bfa_ioc.c
@@ -707,6 +757,19 @@ index bb3f3297062a..5d10800e51b3 100644
  static inline void zero_user_segments(struct page *page,
  	unsigned start1, unsigned end1,
  	unsigned start2, unsigned end2)
+diff --git a/include/linux/kref.h b/include/linux/kref.h
+index f4156f88f557..56f7072b0c8a 100644
+--- a/include/linux/kref.h
++++ b/include/linux/kref.h
+@@ -66,7 +66,7 @@ static inline void kref_get(struct kref *kref)
+  */
+ static inline int kref_put(struct kref *kref, void (*release)(struct kref *kref))
+ {
+-	WARN_ON(release == NULL);
++	BUG_ON(release == NULL);
+ 
+ 	if (refcount_dec_and_test(&kref->refcount)) {
+ 		release(kref);
 diff --git a/include/linux/percpu.h b/include/linux/percpu.h
 index 56939d3f6e53..cbd850eb4e2e 100644
 --- a/include/linux/percpu.h
@@ -1453,6 +1516,19 @@ index fa16c0f82d6e..44a71964174e 100644
  	help
  	  Enable this to turn on extended checks in the linked-list
  	  walking routines.
+diff --git a/lib/nlattr.c b/lib/nlattr.c
+index b42b8577fc23..902d83cd766c 100644
+--- a/lib/nlattr.c
++++ b/lib/nlattr.c
+@@ -278,6 +278,8 @@ int nla_memcpy(void *dest, const struct nlattr *src, int count)
+ {
+ 	int minlen = min_t(int, count, nla_len(src));
+ 
++	BUG_ON(minlen < 0);
++
+ 	memcpy(dest, nla_data(src), minlen);
+ 	if (count > minlen)
+ 		memset(dest + minlen, 0, count - minlen);
 diff --git a/lib/string.c b/lib/string.c
 index ed83562a53ae..35aa32602edb 100644
 --- a/lib/string.c
@@ -2031,6 +2107,24 @@ index 7f4bc7027ed5..90e0fc344163 100644
 +#endif
  		return PAGE_SIZE << compound_order(page);
  	}
+ 
+diff --git a/mm/swap.c b/mm/swap.c
+index 5dabf444d724..b971c3a568f2 100644
+--- a/mm/swap.c
++++ b/mm/swap.c
+@@ -92,6 +92,13 @@ static void __put_compound_page(struct page *page)
+ 	if (!PageHuge(page))
+ 		__page_cache_release(page);
+ 	dtor = get_compound_page_dtor(page);
++	if (!PageHuge(page))
++		BUG_ON(dtor != free_compound_page
++#ifdef CONFIG_TRANSPARENT_HUGEPAGE
++			&& dtor != free_transhuge_page
++#endif
++		);
++
+ 	(*dtor)(page);
+ }
  
 diff --git a/security/Kconfig b/security/Kconfig
 index d900f47eaa68..34fb609b372d 100644
