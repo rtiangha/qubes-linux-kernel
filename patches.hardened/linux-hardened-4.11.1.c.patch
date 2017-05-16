@@ -1,0 +1,2107 @@
+diff --git a/Documentation/admin-guide/kernel-parameters.txt b/Documentation/admin-guide/kernel-parameters.txt
+index facc20a3f962..41f86a418eea 100644
+--- a/Documentation/admin-guide/kernel-parameters.txt
++++ b/Documentation/admin-guide/kernel-parameters.txt
+@@ -2808,6 +2808,11 @@
+ 			the specified number of seconds.  This is to be used if
+ 			your oopses keep scrolling off the screen.
+ 
++	extra_latent_entropy
++			Enable a very simple form of latent entropy extraction
++			from the first 4GB of memory as the bootmem allocator
++			passes the memory pages to the buddy allocator.
++
+ 	pcbit=		[HW,ISDN]
+ 
+ 	pcd.		[PARIDE]
+diff --git a/Documentation/sysctl/kernel.txt b/Documentation/sysctl/kernel.txt
+index bac23c198360..f7985cf7ebde 100644
+--- a/Documentation/sysctl/kernel.txt
++++ b/Documentation/sysctl/kernel.txt
+@@ -89,6 +89,7 @@ show up in /proc/sys/kernel:
+ - sysctl_writes_strict
+ - tainted
+ - threads-max
++- tiocsti_restrict
+ - unknown_nmi_panic
+ - watchdog
+ - watchdog_thresh
+@@ -987,6 +988,26 @@ available RAM pages threads-max is reduced accordingly.
+ 
+ ==============================================================
+ 
++tiocsti_restrict:
++
++This toggle indicates whether unprivileged users are prevented
++from using the TIOCSTI ioctl to inject commands into other processes
++which share a tty session.
++
++When tiocsti_restrict is set to (0) there are no restrictions(accept
++the default restriction of only being able to injection commands into
++one's own tty). When tiocsti_restrict is set to (1), users must
++have CAP_SYS_ADMIN to use the TIOCSTI ioctl.
++
++When user namespaces are in use, the check for the capability
++CAP_SYS_ADMIN is done against the user namespace that originally
++opened the tty.
++
++The kernel config option CONFIG_SECURITY_TIOCSTI_RESTRICT sets the
++default value of tiocsti_restrict.
++
++==============================================================
++
+ unknown_nmi_panic:
+ 
+ The value in this file affects behavior of handling NMI. When the
+diff --git a/arch/Kconfig b/arch/Kconfig
+index cd211a14a88f..616eae29a214 100644
+--- a/arch/Kconfig
++++ b/arch/Kconfig
+@@ -407,6 +407,11 @@ config GCC_PLUGIN_LATENT_ENTROPY
+ 	  is some slowdown of the boot process (about 0.5%) and fork and
+ 	  irq processing.
+ 
++	  When extra_latent_entropy is passed on the kernel command line,
++	  entropy will be extracted from up to the first 4GB of RAM while the
++	  runtime memory allocator is being initialized.  This costs even more
++	  slowdown of the boot process.
++
+ 	  Note that entropy extracted this way is not cryptographically
+ 	  secure!
+ 
+@@ -452,7 +457,7 @@ config CC_STACKPROTECTOR
+ choice
+ 	prompt "Stack Protector buffer overflow detection"
+ 	depends on HAVE_CC_STACKPROTECTOR
+-	default CC_STACKPROTECTOR_NONE
++	default CC_STACKPROTECTOR_STRONG
+ 	help
+ 	  This option turns on the "stack-protector" GCC feature. This
+ 	  feature puts, at the beginning of functions, a canary value on
+@@ -654,7 +659,7 @@ config ARCH_MMAP_RND_BITS
+ 	int "Number of bits to use for ASLR of mmap base address" if EXPERT
+ 	range ARCH_MMAP_RND_BITS_MIN ARCH_MMAP_RND_BITS_MAX
+ 	default ARCH_MMAP_RND_BITS_DEFAULT if ARCH_MMAP_RND_BITS_DEFAULT
+-	default ARCH_MMAP_RND_BITS_MIN
++	default ARCH_MMAP_RND_BITS_MAX
+ 	depends on HAVE_ARCH_MMAP_RND_BITS
+ 	help
+ 	  This value can be used to select the number of bits to use to
+@@ -688,7 +693,7 @@ config ARCH_MMAP_RND_COMPAT_BITS
+ 	int "Number of bits to use for ASLR of mmap base address for compatible applications" if EXPERT
+ 	range ARCH_MMAP_RND_COMPAT_BITS_MIN ARCH_MMAP_RND_COMPAT_BITS_MAX
+ 	default ARCH_MMAP_RND_COMPAT_BITS_DEFAULT if ARCH_MMAP_RND_COMPAT_BITS_DEFAULT
+-	default ARCH_MMAP_RND_COMPAT_BITS_MIN
++	default ARCH_MMAP_RND_COMPAT_BITS_MAX
+ 	depends on HAVE_ARCH_MMAP_RND_COMPAT_BITS
+ 	help
+ 	  This value can be used to select the number of bits to use to
+diff --git a/arch/arm64/include/asm/stackprotector.h b/arch/arm64/include/asm/stackprotector.h
+index fe5e287dc56b..818d1ad9440a 100644
+--- a/arch/arm64/include/asm/stackprotector.h
++++ b/arch/arm64/include/asm/stackprotector.h
+@@ -31,6 +31,9 @@ static __always_inline void boot_init_stack_canary(void)
+ 	get_random_bytes(&canary, sizeof(canary));
+ 	canary ^= LINUX_VERSION_CODE;
+ 
++	/* Sacrifice 8 bits of entropy to mitigate non-terminated C string overflows */
++	canary &= ~(unsigned long)0xff;
++
+ 	current->stack_canary = canary;
+ 	__stack_chk_guard = current->stack_canary;
+ }
+diff --git a/arch/arm64/include/asm/string.h b/arch/arm64/include/asm/string.h
+index 2eb714c4639f..d0aa42907569 100644
+--- a/arch/arm64/include/asm/string.h
++++ b/arch/arm64/include/asm/string.h
+@@ -63,6 +63,11 @@ extern int memcmp(const void *, const void *, size_t);
+ #define memcpy(dst, src, len) __memcpy(dst, src, len)
+ #define memmove(dst, src, len) __memmove(dst, src, len)
+ #define memset(s, c, n) __memset(s, c, n)
++
++#ifndef __NO_FORTIFY
++#define __NO_FORTIFY /* FORTIFY_SOURCE uses __builtin_memcpy, etc. */
++#endif
++
+ #endif
+ 
+ #endif
+diff --git a/arch/arm64/kernel/vdso.c b/arch/arm64/kernel/vdso.c
+index 41b6e31f8f55..ae35f1855e06 100644
+--- a/arch/arm64/kernel/vdso.c
++++ b/arch/arm64/kernel/vdso.c
+@@ -37,7 +37,7 @@
+ #include <asm/vdso.h>
+ #include <asm/vdso_datapage.h>
+ 
+-extern char vdso_start, vdso_end;
++extern char vdso_start[], vdso_end[];
+ static unsigned long vdso_pages __ro_after_init;
+ 
+ /*
+@@ -125,14 +125,14 @@ static int __init vdso_init(void)
+ 	struct page **vdso_pagelist;
+ 	unsigned long pfn;
+ 
+-	if (memcmp(&vdso_start, "\177ELF", 4)) {
++	if (memcmp(vdso_start, "\177ELF", 4)) {
+ 		pr_err("vDSO is not a valid ELF object!\n");
+ 		return -EINVAL;
+ 	}
+ 
+-	vdso_pages = (&vdso_end - &vdso_start) >> PAGE_SHIFT;
++	vdso_pages = (vdso_end - vdso_start) >> PAGE_SHIFT;
+ 	pr_info("vdso: %ld pages (%ld code @ %p, %ld data @ %p)\n",
+-		vdso_pages + 1, vdso_pages, &vdso_start, 1L, vdso_data);
++		vdso_pages + 1, vdso_pages, vdso_start, 1L, vdso_data);
+ 
+ 	/* Allocate the vDSO pagelist, plus a page for the data. */
+ 	vdso_pagelist = kcalloc(vdso_pages + 1, sizeof(struct page *),
+@@ -145,7 +145,7 @@ static int __init vdso_init(void)
+ 
+ 
+ 	/* Grab the vDSO code pages. */
+-	pfn = sym_to_pfn(&vdso_start);
++	pfn = sym_to_pfn(vdso_start);
+ 
+ 	for (i = 0; i < vdso_pages; i++)
+ 		vdso_pagelist[i + 1] = pfn_to_page(pfn + i);
+diff --git a/arch/x86/Kconfig b/arch/x86/Kconfig
+index cc98d5a294ee..84e5476357fd 100644
+--- a/arch/x86/Kconfig
++++ b/arch/x86/Kconfig
+@@ -1118,8 +1118,7 @@ config VM86
+        default X86_LEGACY_VM86
+ 
+ config X86_16BIT
+-	bool "Enable support for 16-bit segments" if EXPERT
+-	default y
++	bool "Enable support for 16-bit segments"
+ 	depends on MODIFY_LDT_SYSCALL
+ 	---help---
+ 	  This option is required by programs like Wine to run 16-bit
+@@ -1966,7 +1965,7 @@ config RELOCATABLE
+ config RANDOMIZE_BASE
+ 	bool "Randomize the address of the kernel image (KASLR)"
+ 	depends on RELOCATABLE
+-	default n
++	default y
+ 	---help---
+ 	  In support of Kernel Address Space Layout Randomization (KASLR),
+ 	  this randomizes the physical address at which the kernel image
+@@ -1996,7 +1995,7 @@ config RANDOMIZE_BASE
+ 	  theoretically possible, but the implementations are further
+ 	  limited due to memory layouts.
+ 
+-	  If unsure, say N.
++	  If unsure, say Y.
+ 
+ # Relocation on x86 needs some additional build support
+ config X86_NEED_RELOCS
+@@ -2045,7 +2044,7 @@ config RANDOMIZE_MEMORY
+ 	   configuration have in average 30,000 different possible virtual
+ 	   addresses for each memory section.
+ 
+-	   If unsure, say N.
++	   If unsure, say Y.
+ 
+ config RANDOMIZE_MEMORY_PHYSICAL_PADDING
+ 	hex "Physical memory mapping padding" if EXPERT
+@@ -2234,8 +2233,7 @@ config CMDLINE_OVERRIDE
+ 	  be set to 'N' under normal conditions.
+ 
+ config MODIFY_LDT_SYSCALL
+-	bool "Enable the LDT (local descriptor table)" if EXPERT
+-	default y
++	bool "Enable the LDT (local descriptor table)"
+ 	---help---
+ 	  Linux can allow user programs to install a per-process x86
+ 	  Local Descriptor Table (LDT) using the modify_ldt(2) system
+diff --git a/arch/x86/boot/compressed/error.h b/arch/x86/boot/compressed/error.h
+index 2e59dac07f9e..d732e608e3af 100644
+--- a/arch/x86/boot/compressed/error.h
++++ b/arch/x86/boot/compressed/error.h
+@@ -1,7 +1,9 @@
+ #ifndef BOOT_COMPRESSED_ERROR_H
+ #define BOOT_COMPRESSED_ERROR_H
+ 
++#include <linux/compiler.h>
++
+ void warn(char *m);
+-void error(char *m);
++void error(char *m) __noreturn;
+ 
+ #endif /* BOOT_COMPRESSED_ERROR_H */
+diff --git a/arch/x86/boot/compressed/misc.c b/arch/x86/boot/compressed/misc.c
+index b3c5a5f030ce..43691238a21d 100644
+--- a/arch/x86/boot/compressed/misc.c
++++ b/arch/x86/boot/compressed/misc.c
+@@ -409,3 +409,8 @@ asmlinkage __visible void *extract_kernel(void *rmode, memptr heap,
+ 	debug_putstr("done.\nBooting the kernel.\n");
+ 	return output;
+ }
++
++void fortify_panic(const char *name)
++{
++	error("detected buffer overflow");
++}
+diff --git a/arch/x86/configs/i386_defconfig b/arch/x86/configs/i386_defconfig
+index 5fa6ee2c2dde..6cf79e1a6830 100644
+--- a/arch/x86/configs/i386_defconfig
++++ b/arch/x86/configs/i386_defconfig
+@@ -57,6 +57,8 @@ CONFIG_EFI=y
+ CONFIG_HZ_1000=y
+ CONFIG_KEXEC=y
+ CONFIG_CRASH_DUMP=y
++CONFIG_RANDOMIZE_BASE=y
++CONFIG_RANDOMIZE_MEMORY=y
+ # CONFIG_COMPAT_VDSO is not set
+ CONFIG_HIBERNATION=y
+ CONFIG_PM_DEBUG=y
+diff --git a/arch/x86/configs/x86_64_defconfig b/arch/x86/configs/x86_64_defconfig
+index 6205d3b81e6d..de45f57b410d 100644
+--- a/arch/x86/configs/x86_64_defconfig
++++ b/arch/x86/configs/x86_64_defconfig
+@@ -55,6 +55,8 @@ CONFIG_EFI=y
+ CONFIG_HZ_1000=y
+ CONFIG_KEXEC=y
+ CONFIG_CRASH_DUMP=y
++CONFIG_RANDOMIZE_BASE=y
++CONFIG_RANDOMIZE_MEMORY=y
+ # CONFIG_COMPAT_VDSO is not set
+ CONFIG_HIBERNATION=y
+ CONFIG_PM_DEBUG=y
+diff --git a/arch/x86/entry/vdso/vma.c b/arch/x86/entry/vdso/vma.c
+index 226ca70dc6bd..8a42db347a79 100644
+--- a/arch/x86/entry/vdso/vma.c
++++ b/arch/x86/entry/vdso/vma.c
+@@ -199,55 +199,9 @@ static int map_vdso(const struct vdso_image *image, unsigned long addr)
+ }
+ 
+ #ifdef CONFIG_X86_64
+-/*
+- * Put the vdso above the (randomized) stack with another randomized
+- * offset.  This way there is no hole in the middle of address space.
+- * To save memory make sure it is still in the same PTE as the stack
+- * top.  This doesn't give that many random bits.
+- *
+- * Note that this algorithm is imperfect: the distribution of the vdso
+- * start address within a PMD is biased toward the end.
+- *
+- * Only used for the 64-bit and x32 vdsos.
+- */
+-static unsigned long vdso_addr(unsigned long start, unsigned len)
+-{
+-	unsigned long addr, end;
+-	unsigned offset;
+-
+-	/*
+-	 * Round up the start address.  It can start out unaligned as a result
+-	 * of stack start randomization.
+-	 */
+-	start = PAGE_ALIGN(start);
+-
+-	/* Round the lowest possible end address up to a PMD boundary. */
+-	end = (start + len + PMD_SIZE - 1) & PMD_MASK;
+-	if (end >= TASK_SIZE_MAX)
+-		end = TASK_SIZE_MAX;
+-	end -= len;
+-
+-	if (end > start) {
+-		offset = get_random_int() % (((end - start) >> PAGE_SHIFT) + 1);
+-		addr = start + (offset << PAGE_SHIFT);
+-	} else {
+-		addr = start;
+-	}
+-
+-	/*
+-	 * Forcibly align the final address in case we have a hardware
+-	 * issue that requires alignment for performance reasons.
+-	 */
+-	addr = align_vdso_addr(addr);
+-
+-	return addr;
+-}
+-
+ static int map_vdso_randomized(const struct vdso_image *image)
+ {
+-	unsigned long addr = vdso_addr(current->mm->start_stack, image->size-image->sym_vvar_start);
+-
+-	return map_vdso(image, addr);
++	return map_vdso(image, 0);
+ }
+ #endif
+ 
+diff --git a/arch/x86/include/asm/elf.h b/arch/x86/include/asm/elf.h
+index 3762536619f8..35801ab355f1 100644
+--- a/arch/x86/include/asm/elf.h
++++ b/arch/x86/include/asm/elf.h
+@@ -371,5 +371,4 @@ struct va_alignment {
+ } ____cacheline_aligned;
+ 
+ extern struct va_alignment va_align;
+-extern unsigned long align_vdso_addr(unsigned long);
+ #endif /* _ASM_X86_ELF_H */
+diff --git a/arch/x86/include/asm/stackprotector.h b/arch/x86/include/asm/stackprotector.h
+index 58505f01962f..04e408163a90 100644
+--- a/arch/x86/include/asm/stackprotector.h
++++ b/arch/x86/include/asm/stackprotector.h
+@@ -75,6 +75,11 @@ static __always_inline void boot_init_stack_canary(void)
+ 	tsc = rdtsc();
+ 	canary += tsc + (tsc << 32UL);
+ 
++#ifdef CONFIG_X86_64
++	/* Sacrifice 8 bits of entropy to mitigate non-terminated C string overflows */
++	canary &= ~(unsigned long)0xff;
++#endif
++
+ 	current->stack_canary = canary;
+ #ifdef CONFIG_X86_64
+ 	this_cpu_write(irq_stack_union.stack_canary, canary);
+diff --git a/arch/x86/include/asm/string_64.h b/arch/x86/include/asm/string_64.h
+index a164862d77e3..e219042b59a7 100644
+--- a/arch/x86/include/asm/string_64.h
++++ b/arch/x86/include/asm/string_64.h
+@@ -77,6 +77,11 @@ int strcmp(const char *cs, const char *ct);
+ #define memcpy(dst, src, len) __memcpy(dst, src, len)
+ #define memmove(dst, src, len) __memmove(dst, src, len)
+ #define memset(s, c, n) __memset(s, c, n)
++
++#ifndef __NO_FORTIFY
++#define __NO_FORTIFY /* FORTIFY_SOURCE uses __builtin_memcpy, etc. */
++#endif
++
+ #endif
+ 
+ __must_check int memcpy_mcsafe_unrolled(void *dst, const void *src, size_t cnt);
+diff --git a/arch/x86/kernel/cpu/common.c b/arch/x86/kernel/cpu/common.c
+index 58094a1f9e9d..9a20ee0f127a 100644
+--- a/arch/x86/kernel/cpu/common.c
++++ b/arch/x86/kernel/cpu/common.c
+@@ -1482,7 +1482,6 @@ void cpu_init(void)
+ 	wrmsrl(MSR_KERNEL_GS_BASE, 0);
+ 	barrier();
+ 
+-	x86_configure_nx();
+ 	x2apic_setup();
+ 
+ 	/*
+diff --git a/arch/x86/kernel/sys_x86_64.c b/arch/x86/kernel/sys_x86_64.c
+index 50215a4b9347..884702732f83 100644
+--- a/arch/x86/kernel/sys_x86_64.c
++++ b/arch/x86/kernel/sys_x86_64.c
+@@ -50,13 +50,6 @@ static unsigned long get_align_bits(void)
+ 	return va_align.bits & get_align_mask();
+ }
+ 
+-unsigned long align_vdso_addr(unsigned long addr)
+-{
+-	unsigned long align_mask = get_align_mask();
+-	addr = (addr + align_mask) & ~align_mask;
+-	return addr | get_align_bits();
+-}
+-
+ static int __init control_va_addr_alignment(char *str)
+ {
+ 	/* guard against enabling this on other CPU families */
+diff --git a/arch/x86/mm/init_32.c b/arch/x86/mm/init_32.c
+index 2b4b53e6793f..d532b4c3407b 100644
+--- a/arch/x86/mm/init_32.c
++++ b/arch/x86/mm/init_32.c
+@@ -534,7 +534,7 @@ static void __init pagetable_init(void)
+ 	permanent_kmaps_init(pgd_base);
+ }
+ 
+-pteval_t __supported_pte_mask __read_mostly = ~(_PAGE_NX | _PAGE_GLOBAL);
++pteval_t __supported_pte_mask __ro_after_init = ~(_PAGE_NX | _PAGE_GLOBAL);
+ EXPORT_SYMBOL_GPL(__supported_pte_mask);
+ 
+ /* user-defined highmem size */
+@@ -864,7 +864,7 @@ static noinline int do_test_wp_bit(void)
+ 	return flag;
+ }
+ 
+-int kernel_set_to_readonly __read_mostly;
++int kernel_set_to_readonly __ro_after_init;
+ 
+ void set_kernel_text_rw(void)
+ {
+@@ -916,12 +916,11 @@ void mark_rodata_ro(void)
+ 	unsigned long start = PFN_ALIGN(_text);
+ 	unsigned long size = PFN_ALIGN(_etext) - start;
+ 
++	kernel_set_to_readonly = 1;
+ 	set_pages_ro(virt_to_page(start), size >> PAGE_SHIFT);
+ 	printk(KERN_INFO "Write protecting the kernel text: %luk\n",
+ 		size >> 10);
+ 
+-	kernel_set_to_readonly = 1;
+-
+ #ifdef CONFIG_CPA_DEBUG
+ 	printk(KERN_INFO "Testing CPA: Reverting %lx-%lx\n",
+ 		start, start+size);
+diff --git a/arch/x86/mm/init_64.c b/arch/x86/mm/init_64.c
+index 15173d37f399..c2298a542fc4 100644
+--- a/arch/x86/mm/init_64.c
++++ b/arch/x86/mm/init_64.c
+@@ -65,7 +65,7 @@
+  * around without checking the pgd every time.
+  */
+ 
+-pteval_t __supported_pte_mask __read_mostly = ~0;
++pteval_t __supported_pte_mask __ro_after_init = ~0;
+ EXPORT_SYMBOL_GPL(__supported_pte_mask);
+ 
+ int force_personality32;
+@@ -1000,7 +1000,7 @@ void __init mem_init(void)
+ 	mem_init_print_info(NULL);
+ }
+ 
+-int kernel_set_to_readonly;
++int kernel_set_to_readonly __ro_after_init;
+ 
+ void set_kernel_text_rw(void)
+ {
+@@ -1049,9 +1049,8 @@ void mark_rodata_ro(void)
+ 
+ 	printk(KERN_INFO "Write protecting the kernel read-only data: %luk\n",
+ 	       (end - start) >> 10);
+-	set_memory_ro(start, (end - start) >> PAGE_SHIFT);
+-
+ 	kernel_set_to_readonly = 1;
++	set_memory_ro(start, (end - start) >> PAGE_SHIFT);
+ 
+ 	/*
+ 	 * The rodata/data/bss/brk section (but not the kernel text!)
+diff --git a/arch/x86/power/hibernate_64.c b/arch/x86/power/hibernate_64.c
+index ded2e8272382..86a7a08516ff 100644
+--- a/arch/x86/power/hibernate_64.c
++++ b/arch/x86/power/hibernate_64.c
+@@ -130,7 +130,7 @@ static int relocate_restore_code(void)
+ 	if (!relocated_restore_code)
+ 		return -ENOMEM;
+ 
+-	memcpy((void *)relocated_restore_code, &core_restore_code, PAGE_SIZE);
++	__builtin_memcpy((void *)relocated_restore_code, &core_restore_code, PAGE_SIZE);
+ 
+ 	/* Make the page containing the relocated code executable */
+ 	pgd = (pgd_t *)__va(read_cr3()) + pgd_index(relocated_restore_code);
+diff --git a/drivers/net/ethernet/brocade/bna/bfa_ioc.c b/drivers/net/ethernet/brocade/bna/bfa_ioc.c
+index 0f6811860ad5..a36e38676640 100644
+--- a/drivers/net/ethernet/brocade/bna/bfa_ioc.c
++++ b/drivers/net/ethernet/brocade/bna/bfa_ioc.c
+@@ -2845,7 +2845,7 @@ bfa_ioc_get_adapter_optrom_ver(struct bfa_ioc *ioc, char *optrom_ver)
+ static void
+ bfa_ioc_get_adapter_manufacturer(struct bfa_ioc *ioc, char *manufacturer)
+ {
+-	memcpy(manufacturer, BFA_MFG_NAME, BFA_ADAPTER_MFG_NAME_LEN);
++	strncpy(manufacturer, BFA_MFG_NAME, BFA_ADAPTER_MFG_NAME_LEN);
+ }
+ 
+ static void
+diff --git a/drivers/net/ethernet/brocade/bna/bnad_ethtool.c b/drivers/net/ethernet/brocade/bna/bnad_ethtool.c
+index 286593922139..31032de5843b 100644
+--- a/drivers/net/ethernet/brocade/bna/bnad_ethtool.c
++++ b/drivers/net/ethernet/brocade/bna/bnad_ethtool.c
+@@ -547,8 +547,8 @@ bnad_get_strings(struct net_device *netdev, u32 stringset, u8 *string)
+ 		for (i = 0; i < BNAD_ETHTOOL_STATS_NUM; i++) {
+ 			BUG_ON(!(strlen(bnad_net_stats_strings[i]) <
+ 				   ETH_GSTRING_LEN));
+-			memcpy(string, bnad_net_stats_strings[i],
+-			       ETH_GSTRING_LEN);
++			strncpy(string, bnad_net_stats_strings[i],
++				ETH_GSTRING_LEN);
+ 			string += ETH_GSTRING_LEN;
+ 		}
+ 		bmap = bna_tx_rid_mask(&bnad->bna);
+diff --git a/drivers/net/ethernet/qlogic/qlge/qlge_dbg.c b/drivers/net/ethernet/qlogic/qlge/qlge_dbg.c
+index 829be21f97b2..28ea0af89aef 100644
+--- a/drivers/net/ethernet/qlogic/qlge/qlge_dbg.c
++++ b/drivers/net/ethernet/qlogic/qlge/qlge_dbg.c
+@@ -765,7 +765,7 @@ int ql_core_dump(struct ql_adapter *qdev, struct ql_mpi_coredump *mpi_coredump)
+ 		sizeof(struct mpi_coredump_global_header);
+ 	mpi_coredump->mpi_global_header.imageSize =
+ 		sizeof(struct ql_mpi_coredump);
+-	memcpy(mpi_coredump->mpi_global_header.idString, "MPI Coredump",
++	strncpy(mpi_coredump->mpi_global_header.idString, "MPI Coredump",
+ 		sizeof(mpi_coredump->mpi_global_header.idString));
+ 
+ 	/* Get generic NIC reg dump */
+@@ -1255,7 +1255,7 @@ static void ql_gen_reg_dump(struct ql_adapter *qdev,
+ 		sizeof(struct mpi_coredump_global_header);
+ 	mpi_coredump->mpi_global_header.imageSize =
+ 		sizeof(struct ql_reg_dump);
+-	memcpy(mpi_coredump->mpi_global_header.idString, "MPI Coredump",
++	strncpy(mpi_coredump->mpi_global_header.idString, "MPI Coredump",
+ 		sizeof(mpi_coredump->mpi_global_header.idString));
+ 
+ 
+diff --git a/drivers/net/wireless/marvell/libertas/mesh.c b/drivers/net/wireless/marvell/libertas/mesh.c
+index d0c881dd5846..754075e7d0e9 100644
+--- a/drivers/net/wireless/marvell/libertas/mesh.c
++++ b/drivers/net/wireless/marvell/libertas/mesh.c
+@@ -1177,7 +1177,7 @@ void lbs_mesh_ethtool_get_strings(struct net_device *dev,
+ 	switch (stringset) {
+ 	case ETH_SS_STATS:
+ 		for (i = 0; i < MESH_STATS_NUM; i++) {
+-			memcpy(s + i * ETH_GSTRING_LEN,
++			__builtin_memcpy(s + i * ETH_GSTRING_LEN,
+ 					mesh_stat_strings[i],
+ 					ETH_GSTRING_LEN);
+ 		}
+diff --git a/drivers/net/wireless/ray_cs.c b/drivers/net/wireless/ray_cs.c
+index b94479441b0c..270b8dce4d43 100644
+--- a/drivers/net/wireless/ray_cs.c
++++ b/drivers/net/wireless/ray_cs.c
+@@ -597,7 +597,7 @@ static void init_startup_params(ray_dev_t *local)
+ 	 *    a_beacon_period = hops    a_beacon_period = KuS
+ 	 *//* 64ms = 010000 */
+ 	if (local->fw_ver == 0x55) {
+-		memcpy((UCHAR *) &local->sparm.b4, b4_default_startup_parms,
++		__builtin_memcpy((UCHAR *) &local->sparm.b4, b4_default_startup_parms,
+ 		       sizeof(struct b4_startup_params));
+ 		/* Translate sane kus input values to old build 4/5 format */
+ 		/* i = hop time in uS truncated to 3 bytes */
+diff --git a/drivers/scsi/csiostor/csio_lnode.c b/drivers/scsi/csiostor/csio_lnode.c
+index c00b2ff72b55..3ae2b41aa359 100644
+--- a/drivers/scsi/csiostor/csio_lnode.c
++++ b/drivers/scsi/csiostor/csio_lnode.c
+@@ -245,7 +245,7 @@ csio_append_attrib(uint8_t **ptr, uint16_t type, uint8_t *val, uint16_t len)
+ 	len += 4;		/* includes attribute type and length */
+ 	len = (len + 3) & ~3;	/* should be multiple of 4 bytes */
+ 	ae->len = htons(len);
+-	memcpy(ae->value, val, len);
++	__builtin_memcpy(ae->value, val, len);
+ 	*ptr += len;
+ }
+ 
+diff --git a/drivers/scsi/qedf/qedf_main.c b/drivers/scsi/qedf/qedf_main.c
+index cceddd995a4b..a5c97342fd5d 100644
+--- a/drivers/scsi/qedf/qedf_main.c
++++ b/drivers/scsi/qedf/qedf_main.c
+@@ -2895,7 +2895,7 @@ static int __qedf_probe(struct pci_dev *pdev, int mode)
+ 	slowpath_params.drv_minor = QEDF_DRIVER_MINOR_VER;
+ 	slowpath_params.drv_rev = QEDF_DRIVER_REV_VER;
+ 	slowpath_params.drv_eng = QEDF_DRIVER_ENG_VER;
+-	memcpy(slowpath_params.name, "qedf", QED_DRV_VER_STR_SIZE);
++	strncpy(slowpath_params.name, "qedf", QED_DRV_VER_STR_SIZE);
+ 	rc = qed_ops->common->slowpath_start(qedf->cdev, &slowpath_params);
+ 	if (rc) {
+ 		QEDF_ERR(&(qedf->dbg_ctx), "Cannot start slowpath.\n");
+diff --git a/drivers/tty/tty_io.c b/drivers/tty/tty_io.c
+index e6d1a6510886..fe68d1424879 100644
+--- a/drivers/tty/tty_io.c
++++ b/drivers/tty/tty_io.c
+@@ -171,6 +171,7 @@ static void free_tty_struct(struct tty_struct *tty)
+ 	put_device(tty->dev);
+ 	kfree(tty->write_buf);
+ 	tty->magic = 0xDEADDEAD;
++	put_user_ns(tty->owner_user_ns);
+ 	kfree(tty);
+ }
+ 
+@@ -2296,11 +2297,17 @@ static int tty_fasync(int fd, struct file *filp, int on)
+  *	FIXME: may race normal receive processing
+  */
+ 
++int tiocsti_restrict = IS_ENABLED(CONFIG_SECURITY_TIOCSTI_RESTRICT);
++
+ static int tiocsti(struct tty_struct *tty, char __user *p)
+ {
+ 	char ch, mbz = 0;
+ 	struct tty_ldisc *ld;
+ 
++	if (tiocsti_restrict && !ns_capable(tty->owner_user_ns,CAP_SYS_ADMIN)) {
++		pr_warn_ratelimited("TIOCSTI ioctl call blocked for non-privileged process\n");
++		return -EPERM;
++	}
+ 	if ((current->signal->tty != tty) && !capable(CAP_SYS_ADMIN))
+ 		return -EPERM;
+ 	if (get_user(ch, p))
+@@ -3191,6 +3198,7 @@ struct tty_struct *alloc_tty_struct(struct tty_driver *driver, int idx)
+ 	tty->index = idx;
+ 	tty_line_name(driver, idx, tty->name);
+ 	tty->dev = tty_get_device(tty);
++	tty->owner_user_ns = get_user_ns(current_user_ns());
+ 
+ 	return tty;
+ }
+diff --git a/fs/exec.c b/fs/exec.c
+index 65145a3df065..55d34442bbc0 100644
+--- a/fs/exec.c
++++ b/fs/exec.c
+@@ -62,6 +62,7 @@
+ #include <linux/oom.h>
+ #include <linux/compat.h>
+ #include <linux/vmalloc.h>
++#include <linux/random.h>
+ 
+ #include <linux/uaccess.h>
+ #include <asm/mmu_context.h>
+@@ -300,6 +301,8 @@ static int __bprm_mm_init(struct linux_binprm *bprm)
+ 	arch_bprm_mm_init(mm, vma);
+ 	up_write(&mm->mmap_sem);
+ 	bprm->p = vma->vm_end - sizeof(void *);
++	if (randomize_va_space)
++		bprm->p ^= (get_random_long() & ~15) & ~PAGE_MASK;
+ 	return 0;
+ err:
+ 	up_write(&mm->mmap_sem);
+diff --git a/fs/pipe.c b/fs/pipe.c
+index 73b84baf58f8..ce1b5d5d280c 100644
+--- a/fs/pipe.c
++++ b/fs/pipe.c
+@@ -37,7 +37,7 @@ unsigned int pipe_max_size = 1048576;
+ /*
+  * Minimum pipe size, as required by POSIX
+  */
+-unsigned int pipe_min_size = PAGE_SIZE;
++unsigned int pipe_min_size __read_only = PAGE_SIZE;
+ 
+ /* Maximum allocatable pages per user. Hard limit is unset by default, soft
+  * matches default values.
+diff --git a/include/linux/cache.h b/include/linux/cache.h
+index 1be04f8c563a..bb1226616bdc 100644
+--- a/include/linux/cache.h
++++ b/include/linux/cache.h
+@@ -30,6 +30,8 @@
+ #define __ro_after_init __attribute__((__section__(".data..ro_after_init")))
+ #endif
+ 
++#define __read_only __ro_after_init
++
+ #ifndef ____cacheline_aligned
+ #define ____cacheline_aligned __attribute__((__aligned__(SMP_CACHE_BYTES)))
+ #endif
+diff --git a/include/linux/gfp.h b/include/linux/gfp.h
+index db373b9d3223..8e67d5c3df10 100644
+--- a/include/linux/gfp.h
++++ b/include/linux/gfp.h
+@@ -483,9 +483,9 @@ extern struct page *alloc_pages_vma(gfp_t gfp_mask, int order,
+ extern unsigned long __get_free_pages(gfp_t gfp_mask, unsigned int order);
+ extern unsigned long get_zeroed_page(gfp_t gfp_mask);
+ 
+-void *alloc_pages_exact(size_t size, gfp_t gfp_mask);
++void *alloc_pages_exact(size_t size, gfp_t gfp_mask) __attribute__((alloc_size(1)));
+ void free_pages_exact(void *virt, size_t size);
+-void * __meminit alloc_pages_exact_nid(int nid, size_t size, gfp_t gfp_mask);
++void * __meminit alloc_pages_exact_nid(int nid, size_t size, gfp_t gfp_mask) __attribute__((alloc_size(1)));
+ 
+ #define __get_free_page(gfp_mask) \
+ 		__get_free_pages((gfp_mask), 0)
+diff --git a/include/linux/highmem.h b/include/linux/highmem.h
+index bb3f3297062a..5d10800e51b3 100644
+--- a/include/linux/highmem.h
++++ b/include/linux/highmem.h
+@@ -190,6 +190,13 @@ static inline void clear_highpage(struct page *page)
+ 	kunmap_atomic(kaddr);
+ }
+ 
++static inline void verify_zero_highpage(struct page *page)
++{
++	void *kaddr = kmap_atomic(page);
++	BUG_ON(memchr_inv(kaddr, 0, PAGE_SIZE));
++	kunmap_atomic(kaddr);
++}
++
+ static inline void zero_user_segments(struct page *page,
+ 	unsigned start1, unsigned end1,
+ 	unsigned start2, unsigned end2)
+diff --git a/include/linux/percpu.h b/include/linux/percpu.h
+index 56939d3f6e53..cbd850eb4e2e 100644
+--- a/include/linux/percpu.h
++++ b/include/linux/percpu.h
+@@ -109,7 +109,7 @@ extern int __init pcpu_page_first_chunk(size_t reserved_size,
+ 				pcpu_fc_populate_pte_fn_t populate_pte_fn);
+ #endif
+ 
+-extern void __percpu *__alloc_reserved_percpu(size_t size, size_t align);
++extern void __percpu *__alloc_reserved_percpu(size_t size, size_t align) __attribute__((alloc_size(1)));
+ extern bool is_kernel_percpu_address(unsigned long addr);
+ 
+ #if !defined(CONFIG_SMP) || !defined(CONFIG_HAVE_SETUP_PER_CPU_AREA)
+@@ -117,8 +117,8 @@ extern void __init setup_per_cpu_areas(void);
+ #endif
+ extern void __init percpu_init_late(void);
+ 
+-extern void __percpu *__alloc_percpu_gfp(size_t size, size_t align, gfp_t gfp);
+-extern void __percpu *__alloc_percpu(size_t size, size_t align);
++extern void __percpu *__alloc_percpu_gfp(size_t size, size_t align, gfp_t gfp) __attribute__((alloc_size(1)));
++extern void __percpu *__alloc_percpu(size_t size, size_t align) __attribute__((alloc_size(1)));
+ extern void free_percpu(void __percpu *__pdata);
+ extern phys_addr_t per_cpu_ptr_to_phys(void *addr);
+ 
+diff --git a/include/linux/perf_event.h b/include/linux/perf_event.h
+index 000fdb211c7d..95a3e8daf034 100644
+--- a/include/linux/perf_event.h
++++ b/include/linux/perf_event.h
+@@ -1170,6 +1170,11 @@ extern int perf_cpu_time_max_percent_handler(struct ctl_table *table, int write,
+ int perf_event_max_stack_handler(struct ctl_table *table, int write,
+ 				 void __user *buffer, size_t *lenp, loff_t *ppos);
+ 
++static inline bool perf_paranoid_any(void)
++{
++	return sysctl_perf_event_paranoid > 2;
++}
++
+ static inline bool perf_paranoid_tracepoint_raw(void)
+ {
+ 	return sysctl_perf_event_paranoid > -1;
+diff --git a/include/linux/slab.h b/include/linux/slab.h
+index 3c37a8c51921..35940cfd14e7 100644
+--- a/include/linux/slab.h
++++ b/include/linux/slab.h
+@@ -327,7 +327,7 @@ static __always_inline int kmalloc_index(size_t size)
+ }
+ #endif /* !CONFIG_SLOB */
+ 
+-void *__kmalloc(size_t size, gfp_t flags) __assume_kmalloc_alignment __malloc;
++void *__kmalloc(size_t size, gfp_t flags) __assume_kmalloc_alignment __malloc __attribute__((alloc_size(1)));
+ void *kmem_cache_alloc(struct kmem_cache *, gfp_t flags) __assume_slab_alignment __malloc;
+ void kmem_cache_free(struct kmem_cache *, void *);
+ 
+@@ -351,7 +351,7 @@ static __always_inline void kfree_bulk(size_t size, void **p)
+ }
+ 
+ #ifdef CONFIG_NUMA
+-void *__kmalloc_node(size_t size, gfp_t flags, int node) __assume_kmalloc_alignment __malloc;
++void *__kmalloc_node(size_t size, gfp_t flags, int node) __assume_kmalloc_alignment __malloc __attribute__((alloc_size(1)));
+ void *kmem_cache_alloc_node(struct kmem_cache *, gfp_t flags, int node) __assume_slab_alignment __malloc;
+ #else
+ static __always_inline void *__kmalloc_node(size_t size, gfp_t flags, int node)
+@@ -475,7 +475,7 @@ static __always_inline void *kmalloc_large(size_t size, gfp_t flags)
+  * for general use, and so are not documented here. For a full list of
+  * potential flags, always refer to linux/gfp.h.
+  */
+-static __always_inline void *kmalloc(size_t size, gfp_t flags)
++static __always_inline __attribute__((alloc_size(1))) void *kmalloc(size_t size, gfp_t flags)
+ {
+ 	if (__builtin_constant_p(size)) {
+ 		if (size > KMALLOC_MAX_CACHE_SIZE)
+@@ -515,7 +515,7 @@ static __always_inline int kmalloc_size(int n)
+ 	return 0;
+ }
+ 
+-static __always_inline void *kmalloc_node(size_t size, gfp_t flags, int node)
++static __always_inline __attribute__((alloc_size(1))) void *kmalloc_node(size_t size, gfp_t flags, int node)
+ {
+ #ifndef CONFIG_SLOB
+ 	if (__builtin_constant_p(size) &&
+diff --git a/include/linux/slub_def.h b/include/linux/slub_def.h
+index 07ef550c6627..e42aafcbe2f6 100644
+--- a/include/linux/slub_def.h
++++ b/include/linux/slub_def.h
+@@ -93,6 +93,15 @@ struct kmem_cache {
+ #endif
+ #endif
+ 
++#ifdef CONFIG_SLAB_HARDENED
++	unsigned long random;
++#endif
++
++#ifdef CONFIG_SLAB_CANARY
++	unsigned long random_active;
++	unsigned long random_inactive;
++#endif
++
+ #ifdef CONFIG_NUMA
+ 	/*
+ 	 * Defragmentation by allocating from a remote node.
+diff --git a/include/linux/string.h b/include/linux/string.h
+index 26b6f6a66f83..fe25ea5241d1 100644
+--- a/include/linux/string.h
++++ b/include/linux/string.h
+@@ -169,4 +169,204 @@ static inline const char *kbasename(const char *path)
+ 	return tail ? tail + 1 : path;
+ }
+ 
++#define __FORTIFY_INLINE extern __always_inline __attribute__((gnu_inline))
++#define __RENAME(x) __asm__(#x)
++
++void fortify_panic(const char *name) __noreturn __cold;
++void __read_overflow(void) __compiletime_error("detected read beyond size of object passed as 1st parameter");
++void __read_overflow2(void) __compiletime_error("detected read beyond size of object passed as 2nd parameter");
++void __write_overflow(void) __compiletime_error("detected write beyond size of object passed as 1st parameter");
++
++#if !defined(__NO_FORTIFY) && defined(__OPTIMIZE__) && defined(CONFIG_FORTIFY_SOURCE)
++__FORTIFY_INLINE char *strcpy(char *p, const char *q)
++{
++	size_t p_size = __builtin_object_size(p, 0);
++	size_t q_size = __builtin_object_size(q, 0);
++	if (p_size == (size_t)-1 && q_size == (size_t)-1)
++		return __builtin_strcpy(p, q);
++	if (strscpy(p, q, p_size < q_size ? p_size : q_size) < 0)
++		fortify_panic(__func__);
++	return p;
++}
++
++__FORTIFY_INLINE char *strncpy(char *p, const char *q, __kernel_size_t size)
++{
++	size_t p_size = __builtin_object_size(p, 0);
++	if (__builtin_constant_p(size) && p_size < size)
++		__write_overflow();
++	if (p_size < size)
++		fortify_panic(__func__);
++	return __builtin_strncpy(p, q, size);
++}
++
++__FORTIFY_INLINE char *strcat(char *p, const char *q)
++{
++	size_t p_size = __builtin_object_size(p, 0);
++	if (p_size == (size_t)-1)
++		return __builtin_strcat(p, q);
++	if (strlcat(p, q, p_size) >= p_size)
++		fortify_panic(__func__);
++	return p;
++}
++
++__FORTIFY_INLINE __kernel_size_t strlen(const char *p)
++{
++	__kernel_size_t ret;
++	size_t p_size = __builtin_object_size(p, 0);
++	if (p_size == (size_t)-1)
++		return __builtin_strlen(p);
++	ret = strnlen(p, p_size);
++	if (p_size <= ret)
++		fortify_panic(__func__);
++	return ret;
++}
++
++extern __kernel_size_t __real_strnlen(const char *, __kernel_size_t) __RENAME(strnlen);
++__FORTIFY_INLINE __kernel_size_t strnlen(const char *p, __kernel_size_t maxlen)
++{
++	size_t p_size = __builtin_object_size(p, 0);
++	__kernel_size_t ret = __real_strnlen(p, maxlen < p_size ? maxlen : p_size);
++	if (p_size <= ret)
++		fortify_panic(__func__);
++	return ret;
++}
++
++/* defined after fortified strlen to reuse it */
++extern size_t __real_strlcpy(char *, const char *, size_t) __RENAME(strlcpy);
++__FORTIFY_INLINE size_t strlcpy(char *p, const char *q, size_t size)
++{
++	size_t ret;
++	size_t p_size = __builtin_object_size(p, 0);
++	size_t q_size = __builtin_object_size(q, 0);
++	if (p_size == (size_t)-1 && q_size == (size_t)-1)
++		return __real_strlcpy(p, q, size);
++	ret = strlen(q);
++	if (size) {
++		size_t len = (ret >= size) ? size - 1 : ret;
++		if (__builtin_constant_p(len) && len >= p_size)
++			__write_overflow();
++		if (len >= p_size)
++			fortify_panic(__func__);
++		__builtin_memcpy(p, q, len);
++		p[len] = '\0';
++	}
++	return ret;
++}
++
++/* defined after fortified strlen and strnlen to reuse them */
++__FORTIFY_INLINE char *strncat(char *p, const char *q, __kernel_size_t count)
++{
++	size_t p_len, copy_len;
++	size_t p_size = __builtin_object_size(p, 0);
++	size_t q_size = __builtin_object_size(q, 0);
++	if (p_size == (size_t)-1 && q_size == (size_t)-1)
++		return __builtin_strncat(p, q, count);
++	p_len = strlen(p);
++	copy_len = strnlen(q, count);
++	if (p_size < p_len + copy_len + 1)
++		fortify_panic(__func__);
++	__builtin_memcpy(p + p_len, q, copy_len);
++	p[p_len + copy_len] = '\0';
++	return p;
++}
++
++__FORTIFY_INLINE void *memset(void *p, int c, __kernel_size_t size)
++{
++	size_t p_size = __builtin_object_size(p, 0);
++	if (__builtin_constant_p(size) && p_size < size)
++		__write_overflow();
++	if (p_size < size)
++		fortify_panic(__func__);
++	return __builtin_memset(p, c, size);
++}
++
++__FORTIFY_INLINE void *memcpy(void *p, const void *q, __kernel_size_t size)
++{
++	size_t p_size = __builtin_object_size(p, 0);
++	size_t q_size = __builtin_object_size(q, 0);
++	if (__builtin_constant_p(size)) {
++		if (p_size < size)
++			__write_overflow();
++		if (q_size < size)
++			__read_overflow2();
++	}
++	if (p_size < size || q_size < size)
++		fortify_panic(__func__);
++	return __builtin_memcpy(p, q, size);
++}
++
++__FORTIFY_INLINE void *memmove(void *p, const void *q, __kernel_size_t size)
++{
++	size_t p_size = __builtin_object_size(p, 0);
++	size_t q_size = __builtin_object_size(q, 0);
++	if (__builtin_constant_p(size)) {
++		if (p_size < size)
++			__write_overflow();
++		if (q_size < size)
++			__read_overflow2();
++	}
++	if (p_size < size || q_size < size)
++		fortify_panic(__func__);
++	return __builtin_memmove(p, q, size);
++}
++
++extern void *__real_memscan(void *, int, __kernel_size_t) __RENAME(memscan);
++__FORTIFY_INLINE void *memscan(void *p, int c, __kernel_size_t size)
++{
++	size_t p_size = __builtin_object_size(p, 0);
++	if (__builtin_constant_p(size) && p_size < size)
++		__read_overflow();
++	if (p_size < size)
++		fortify_panic(__func__);
++	return __real_memscan(p, c, size);
++}
++
++__FORTIFY_INLINE int memcmp(const void *p, const void *q, __kernel_size_t size)
++{
++	size_t p_size = __builtin_object_size(p, 0);
++	size_t q_size = __builtin_object_size(q, 0);
++	if (__builtin_constant_p(size)) {
++		if (p_size < size)
++			__read_overflow();
++		if (q_size < size)
++			__read_overflow2();
++	}
++	if (p_size < size || q_size < size)
++		fortify_panic(__func__);
++	return __builtin_memcmp(p, q, size);
++}
++
++__FORTIFY_INLINE void *memchr(const void *p, int c, __kernel_size_t size)
++{
++	size_t p_size = __builtin_object_size(p, 0);
++	if (__builtin_constant_p(size) && p_size < size)
++		__read_overflow();
++	if (p_size < size)
++		fortify_panic(__func__);
++	return __builtin_memchr(p, c, size);
++}
++
++void *__real_memchr_inv(const void *s, int c, size_t n) __RENAME(memchr_inv);
++__FORTIFY_INLINE void *memchr_inv(const void *p, int c, size_t size)
++{
++	size_t p_size = __builtin_object_size(p, 0);
++	if (__builtin_constant_p(size) && p_size < size)
++		__read_overflow();
++	if (p_size < size)
++		fortify_panic(__func__);
++	return __real_memchr_inv(p, c, size);
++}
++
++extern void *__real_kmemdup(const void *src, size_t len, gfp_t gfp) __RENAME(kmemdup);
++__FORTIFY_INLINE void *kmemdup(const void *p, size_t size, gfp_t gfp)
++{
++	size_t p_size = __builtin_object_size(p, 0);
++	if (__builtin_constant_p(size) && p_size < size)
++		__read_overflow();
++	if (p_size < size)
++		fortify_panic(__func__);
++	return __real_kmemdup(p, size, gfp);
++}
++#endif
++
+ #endif /* _LINUX_STRING_H_ */
+diff --git a/include/linux/tty.h b/include/linux/tty.h
+index 1017e904c0a3..2fd7f49e379e 100644
+--- a/include/linux/tty.h
++++ b/include/linux/tty.h
+@@ -12,6 +12,7 @@
+ #include <uapi/linux/tty.h>
+ #include <linux/rwsem.h>
+ #include <linux/llist.h>
++#include <linux/user_namespace.h>
+ 
+ 
+ /*
+@@ -333,6 +334,7 @@ struct tty_struct {
+ 	/* If the tty has a pending do_SAK, queue it here - akpm */
+ 	struct work_struct SAK_work;
+ 	struct tty_port *port;
++	struct user_namespace *owner_user_ns;
+ };
+ 
+ /* Each of a tty's open files has private_data pointing to tty_file_private */
+@@ -342,6 +344,8 @@ struct tty_file_private {
+ 	struct list_head list;
+ };
+ 
++extern int tiocsti_restrict;
++
+ /* tty magic number */
+ #define TTY_MAGIC		0x5401
+ 
+diff --git a/include/linux/vmalloc.h b/include/linux/vmalloc.h
+index d68edffbf142..764d10707d87 100644
+--- a/include/linux/vmalloc.h
++++ b/include/linux/vmalloc.h
+@@ -67,19 +67,19 @@ static inline void vmalloc_init(void)
+ }
+ #endif
+ 
+-extern void *vmalloc(unsigned long size);
+-extern void *vzalloc(unsigned long size);
+-extern void *vmalloc_user(unsigned long size);
+-extern void *vmalloc_node(unsigned long size, int node);
+-extern void *vzalloc_node(unsigned long size, int node);
+-extern void *vmalloc_exec(unsigned long size);
+-extern void *vmalloc_32(unsigned long size);
+-extern void *vmalloc_32_user(unsigned long size);
+-extern void *__vmalloc(unsigned long size, gfp_t gfp_mask, pgprot_t prot);
++extern void *vmalloc(unsigned long size) __attribute__((alloc_size(1)));
++extern void *vzalloc(unsigned long size) __attribute__((alloc_size(1)));
++extern void *vmalloc_user(unsigned long size) __attribute__((alloc_size(1)));
++extern void *vmalloc_node(unsigned long size, int node) __attribute__((alloc_size(1)));
++extern void *vzalloc_node(unsigned long size, int node) __attribute__((alloc_size(1)));
++extern void *vmalloc_exec(unsigned long size) __attribute__((alloc_size(1)));
++extern void *vmalloc_32(unsigned long size) __attribute__((alloc_size(1)));
++extern void *vmalloc_32_user(unsigned long size) __attribute__((alloc_size(1)));
++extern void *__vmalloc(unsigned long size, gfp_t gfp_mask, pgprot_t prot) __attribute__((alloc_size(1)));
+ extern void *__vmalloc_node_range(unsigned long size, unsigned long align,
+ 			unsigned long start, unsigned long end, gfp_t gfp_mask,
+ 			pgprot_t prot, unsigned long vm_flags, int node,
+-			const void *caller);
++			const void *caller) __attribute__((alloc_size(1)));
+ 
+ extern void vfree(const void *addr);
+ extern void vfree_atomic(const void *addr);
+diff --git a/init/Kconfig b/init/Kconfig
+index a92f27da4a27..4ae775d40719 100644
+--- a/init/Kconfig
++++ b/init/Kconfig
+@@ -1783,7 +1783,7 @@ config VM_EVENT_COUNTERS
+ 
+ config SLUB_DEBUG
+ 	default y
+-	bool "Enable SLUB debugging support" if EXPERT
++	bool "Enable SLUB debugging support"
+ 	depends on SLUB && SYSFS
+ 	help
+ 	  SLUB has extensive debug support features. Disabling these can
+@@ -1807,7 +1807,6 @@ config SLUB_MEMCG_SYSFS_ON
+ 
+ config COMPAT_BRK
+ 	bool "Disable heap randomization"
+-	default y
+ 	help
+ 	  Randomizing heap placement makes heap exploits harder, but it
+ 	  also breaks ancient binaries (including anything libc5 based).
+@@ -1853,7 +1852,7 @@ config SLOB
+ endchoice
+ 
+ config SLAB_FREELIST_RANDOM
+-	default n
++	default y
+ 	depends on SLAB || SLUB
+ 	bool "SLAB freelist randomization"
+ 	help
+@@ -1861,6 +1860,49 @@ config SLAB_FREELIST_RANDOM
+ 	  security feature reduces the predictability of the kernel slab
+ 	  allocator against heap overflows.
+ 
++config SLAB_HARDENED
++	default y
++	depends on SLAB_FREELIST_RANDOM && SLUB
++	bool "Hardened SLAB infrastructure"
++	help
++          Make minor performance sacrifices to harden the kernel slab
++          allocator.
++
++config SLAB_CANARY
++	default y
++	depends on SLUB
++	bool "SLAB canaries"
++	help
++	  Place canaries at the end of kernel slab allocations, sacrificing
++	  some performance and memory usage for security.
++
++	  Canaries can detect some forms of heap corruption when allocations
++	  are freed and as part of the HARDENED_USERCOPY feature. It provides
++	  basic use-after-free detection for HARDENED_USERCOPY.
++
++	  Canaries absorb small overflows (rendering them harmless), mitigate
++	  non-NUL terminated C string overflows on 64-bit via a guaranteed zero
++	  byte and provide basic double-free detection.
++
++config SLAB_SANITIZE
++	default y
++	depends on SLUB
++	bool "Sanitize SLAB allocations"
++	help
++	  Zero fill slab allocations on free, reducing the lifetime of
++	  sensitive data and helping to mitigate use-after-free bugs.
++
++	  For slabs with debug poisoning enabling, this has no impact.
++
++config SLAB_SANITIZE_VERIFY
++	default y
++	depends on SLAB_SANITIZE && SANITIZE_PAGE
++	depends on !HIBERNATION
++	bool "Verify sanitized SLAB allocations"
++	help
++	  Verify that newly allocated slab allocations are zeroed to detect
++	  write-after-free bugs.
++
+ config SLUB_CPU_PARTIAL
+ 	default y
+ 	depends on SLUB && SMP
+diff --git a/kernel/events/core.c b/kernel/events/core.c
+index ff01cba86f43..c75a126e71a2 100644
+--- a/kernel/events/core.c
++++ b/kernel/events/core.c
+@@ -393,8 +393,13 @@ static struct srcu_struct pmus_srcu;
+  *   0 - disallow raw tracepoint access for unpriv
+  *   1 - disallow cpu events for unpriv
+  *   2 - disallow kernel profiling for unpriv
++ *   3 - disallow all unpriv perf event use
+  */
++#ifdef CONFIG_SECURITY_PERF_EVENTS_RESTRICT
++int sysctl_perf_event_paranoid __read_mostly = 3;
++#else
+ int sysctl_perf_event_paranoid __read_mostly = 2;
++#endif
+ 
+ /* Minimum for 512 kiB + 1 user control page */
+ int sysctl_perf_event_mlock __read_mostly = 512 + (PAGE_SIZE / 1024); /* 'free' kiB per user */
+@@ -9682,6 +9687,9 @@ SYSCALL_DEFINE5(perf_event_open,
+ 	if (flags & ~PERF_FLAG_ALL)
+ 		return -EINVAL;
+ 
++	if (perf_paranoid_any() && !capable(CAP_SYS_ADMIN))
++		return -EACCES;
++
+ 	err = perf_copy_attr(attr_uptr, &attr);
+ 	if (err)
+ 		return err;
+diff --git a/kernel/fork.c b/kernel/fork.c
+index 6c463c80e93d..8b19d212d277 100644
+--- a/kernel/fork.c
++++ b/kernel/fork.c
+@@ -99,6 +99,11 @@
+ 
+ #define CREATE_TRACE_POINTS
+ #include <trace/events/task.h>
++#ifdef CONFIG_USER_NS
++extern int unprivileged_userns_clone;
++#else
++#define unprivileged_userns_clone 0
++#endif
+ 
+ /*
+  * Minimum number of threads to boot the kernel
+@@ -536,7 +541,12 @@ static struct task_struct *dup_task_struct(struct task_struct *orig, int node)
+ 	set_task_stack_end_magic(tsk);
+ 
+ #ifdef CONFIG_CC_STACKPROTECTOR
+-	tsk->stack_canary = get_random_int();
++	tsk->stack_canary = get_random_long();
++
++#ifdef CONFIG_64BIT
++	/* Sacrifice 8 bits of entropy to mitigate non-terminated C string overflows */
++	memset(&tsk->stack_canary, 0, 1);
++#endif
+ #endif
+ 
+ 	/*
+@@ -1507,6 +1517,10 @@ static __latent_entropy struct task_struct *copy_process(
+ 	if ((clone_flags & (CLONE_NEWUSER|CLONE_FS)) == (CLONE_NEWUSER|CLONE_FS))
+ 		return ERR_PTR(-EINVAL);
+ 
++	if ((clone_flags & CLONE_NEWUSER) && !unprivileged_userns_clone)
++		if (!capable(CAP_SYS_ADMIN))
++			return ERR_PTR(-EPERM);
++
+ 	/*
+ 	 * Thread groups must share signals as well, and detached threads
+ 	 * can only be started up within the thread group.
+@@ -2284,6 +2298,12 @@ SYSCALL_DEFINE1(unshare, unsigned long, unshare_flags)
+ 	if (unshare_flags & CLONE_NEWNS)
+ 		unshare_flags |= CLONE_FS;
+ 
++	if ((unshare_flags & CLONE_NEWUSER) && !unprivileged_userns_clone) {
++		err = -EPERM;
++		if (!capable(CAP_SYS_ADMIN))
++			goto bad_unshare_out;
++	}
++
+ 	err = check_unshare_flags(unshare_flags);
+ 	if (err)
+ 		goto bad_unshare_out;
+diff --git a/kernel/kexec_file.c b/kernel/kexec_file.c
+index b118735fea9d..7a147a7add2e 100644
+--- a/kernel/kexec_file.c
++++ b/kernel/kexec_file.c
+@@ -26,13 +26,6 @@
+ #include <linux/vmalloc.h>
+ #include "kexec_internal.h"
+ 
+-/*
+- * Declare these symbols weak so that if architecture provides a purgatory,
+- * these will be overridden.
+- */
+-char __weak kexec_purgatory[0];
+-size_t __weak kexec_purgatory_size = 0;
+-
+ static int kexec_calculate_store_digests(struct kimage *image);
+ 
+ /* Architectures can provide this probe function */
+diff --git a/kernel/kexec_internal.h b/kernel/kexec_internal.h
+index 799a8a452187..50dfcb039a41 100644
+--- a/kernel/kexec_internal.h
++++ b/kernel/kexec_internal.h
+@@ -17,6 +17,8 @@ extern struct mutex kexec_mutex;
+ #ifdef CONFIG_KEXEC_FILE
+ #include <linux/purgatory.h>
+ void kimage_file_post_load_cleanup(struct kimage *image);
++extern char kexec_purgatory[];
++extern size_t kexec_purgatory_size;
+ #else /* CONFIG_KEXEC_FILE */
+ static inline void kimage_file_post_load_cleanup(struct kimage *image) { }
+ #endif /* CONFIG_KEXEC_FILE */
+diff --git a/kernel/sysctl.c b/kernel/sysctl.c
+index 8c8714fcb53c..7d3ecef2133a 100644
+--- a/kernel/sysctl.c
++++ b/kernel/sysctl.c
+@@ -67,6 +67,7 @@
+ #include <linux/kexec.h>
+ #include <linux/bpf.h>
+ #include <linux/mount.h>
++#include <linux/tty.h>
+ 
+ #include <linux/uaccess.h>
+ #include <asm/processor.h>
+@@ -105,6 +106,9 @@ extern int core_uses_pid;
+ extern char core_pattern[];
+ extern unsigned int core_pipe_limit;
+ #endif
++#ifdef CONFIG_USER_NS
++extern int unprivileged_userns_clone;
++#endif
+ extern int pid_max;
+ extern int pid_max_min, pid_max_max;
+ extern int percpu_pagelist_fraction;
+@@ -116,38 +120,38 @@ extern int sysctl_nr_trim_pages;
+ 
+ /* Constants used for minimum and  maximum */
+ #ifdef CONFIG_LOCKUP_DETECTOR
+-static int sixty = 60;
++static int sixty __read_only = 60;
+ #endif
+ 
+-static int __maybe_unused neg_one = -1;
++static int __maybe_unused neg_one __read_only = -1;
+ 
+ static int zero;
+-static int __maybe_unused one = 1;
+-static int __maybe_unused two = 2;
+-static int __maybe_unused four = 4;
+-static unsigned long one_ul = 1;
+-static int one_hundred = 100;
+-static int one_thousand = 1000;
++static int __maybe_unused one __read_only = 1;
++static int __maybe_unused two __read_only = 2;
++static int __maybe_unused four __read_only = 4;
++static unsigned long one_ul __read_only = 1;
++static int one_hundred __read_only = 100;
++static int one_thousand __read_only = 1000;
+ #ifdef CONFIG_PRINTK
+-static int ten_thousand = 10000;
++static int ten_thousand __read_only = 10000;
+ #endif
+ #ifdef CONFIG_PERF_EVENTS
+-static int six_hundred_forty_kb = 640 * 1024;
++static int six_hundred_forty_kb __read_only = 640 * 1024;
+ #endif
+ 
+ /* this is needed for the proc_doulongvec_minmax of vm_dirty_bytes */
+-static unsigned long dirty_bytes_min = 2 * PAGE_SIZE;
++static unsigned long dirty_bytes_min __read_only = 2 * PAGE_SIZE;
+ 
+ /* this is needed for the proc_dointvec_minmax for [fs_]overflow UID and GID */
+-static int maxolduid = 65535;
+-static int minolduid;
++static int maxolduid __read_only = 65535;
++static int minolduid __read_only;
+ 
+-static int ngroups_max = NGROUPS_MAX;
++static int ngroups_max __read_only = NGROUPS_MAX;
+ static const int cap_last_cap = CAP_LAST_CAP;
+ 
+ /*this is needed for proc_doulongvec_minmax of sysctl_hung_task_timeout_secs */
+ #ifdef CONFIG_DETECT_HUNG_TASK
+-static unsigned long hung_task_timeout_max = (LONG_MAX/HZ);
++static unsigned long hung_task_timeout_max __read_only = (LONG_MAX/HZ);
+ #endif
+ 
+ #ifdef CONFIG_INOTIFY_USER
+@@ -266,19 +270,19 @@ static struct ctl_table sysctl_base_table[] = {
+ };
+ 
+ #ifdef CONFIG_SCHED_DEBUG
+-static int min_sched_granularity_ns = 100000;		/* 100 usecs */
+-static int max_sched_granularity_ns = NSEC_PER_SEC;	/* 1 second */
+-static int min_wakeup_granularity_ns;			/* 0 usecs */
+-static int max_wakeup_granularity_ns = NSEC_PER_SEC;	/* 1 second */
++static int min_sched_granularity_ns __read_only = 100000;		/* 100 usecs */
++static int max_sched_granularity_ns __read_only = NSEC_PER_SEC;	/* 1 second */
++static int min_wakeup_granularity_ns __read_only;			/* 0 usecs */
++static int max_wakeup_granularity_ns __read_only = NSEC_PER_SEC;	/* 1 second */
+ #ifdef CONFIG_SMP
+-static int min_sched_tunable_scaling = SCHED_TUNABLESCALING_NONE;
+-static int max_sched_tunable_scaling = SCHED_TUNABLESCALING_END-1;
++static int min_sched_tunable_scaling __read_only = SCHED_TUNABLESCALING_NONE;
++static int max_sched_tunable_scaling __read_only = SCHED_TUNABLESCALING_END-1;
+ #endif /* CONFIG_SMP */
+ #endif /* CONFIG_SCHED_DEBUG */
+ 
+ #ifdef CONFIG_COMPACTION
+-static int min_extfrag_threshold;
+-static int max_extfrag_threshold = 1000;
++static int min_extfrag_threshold __read_only;
++static int max_extfrag_threshold __read_only = 1000;
+ #endif
+ 
+ static struct ctl_table kern_table[] = {
+@@ -491,6 +495,15 @@ static struct ctl_table kern_table[] = {
+ 		.proc_handler	= proc_dointvec,
+ 	},
+ #endif
++#ifdef CONFIG_USER_NS
++	{
++		.procname	= "unprivileged_userns_clone",
++		.data		= &unprivileged_userns_clone,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= proc_dointvec,
++	},
++#endif
+ #ifdef CONFIG_PROC_SYSCTL
+ 	{
+ 		.procname	= "tainted",
+@@ -833,6 +846,17 @@ static struct ctl_table kern_table[] = {
+ 		.extra2		= &two,
+ 	},
+ #endif
++#if defined CONFIG_TTY
++	{
++		.procname	= "tiocsti_restrict",
++		.data		= &tiocsti_restrict,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= proc_dointvec_minmax_sysadmin,
++		.extra1		= &zero,
++		.extra2		= &one,
++	},
++#endif
+ 	{
+ 		.procname	= "ngroups_max",
+ 		.data		= &ngroups_max,
+diff --git a/kernel/user_namespace.c b/kernel/user_namespace.c
+index 2f735cbe05e8..555323178c3c 100644
+--- a/kernel/user_namespace.c
++++ b/kernel/user_namespace.c
+@@ -24,6 +24,9 @@
+ #include <linux/projid.h>
+ #include <linux/fs_struct.h>
+ 
++/* sysctl */
++int unprivileged_userns_clone;
++
+ static struct kmem_cache *user_ns_cachep __read_mostly;
+ static DEFINE_MUTEX(userns_state_mutex);
+ 
+diff --git a/lib/Kconfig.debug b/lib/Kconfig.debug
+index fa16c0f82d6e..44a71964174e 100644
+--- a/lib/Kconfig.debug
++++ b/lib/Kconfig.debug
+@@ -916,6 +916,7 @@ endmenu # "Debug lockups and hangs"
+ 
+ config PANIC_ON_OOPS
+ 	bool "Panic on Oops"
++	default y
+ 	help
+ 	  Say Y here to enable the kernel to panic when it oopses. This
+ 	  has the same effect as setting oops=panic on the kernel command
+@@ -925,7 +926,7 @@ config PANIC_ON_OOPS
+ 	  anything erroneous after an oops which could result in data
+ 	  corruption or other issues.
+ 
+-	  Say N if unsure.
++	  Say Y if unsure.
+ 
+ config PANIC_ON_OOPS_VALUE
+ 	int
+@@ -1249,6 +1250,7 @@ config DEBUG_BUGVERBOSE
+ config DEBUG_LIST
+ 	bool "Debug linked list manipulation"
+ 	depends on DEBUG_KERNEL || BUG_ON_DATA_CORRUPTION
++	default y
+ 	help
+ 	  Enable this to turn on extended checks in the linked-list
+ 	  walking routines.
+diff --git a/lib/string.c b/lib/string.c
+index ed83562a53ae..35aa32602edb 100644
+--- a/lib/string.c
++++ b/lib/string.c
+@@ -952,3 +952,9 @@ char *strreplace(char *s, char old, char new)
+ 	return s;
+ }
+ EXPORT_SYMBOL(strreplace);
++
++void fortify_panic(const char *name)
++{
++	panic("detected buffer overflow in %s", name);
++}
++EXPORT_SYMBOL(fortify_panic);
+diff --git a/lib/vsprintf.c b/lib/vsprintf.c
+index e3bf4e0f10b5..f5a259a82261 100644
+--- a/lib/vsprintf.c
++++ b/lib/vsprintf.c
+@@ -1470,7 +1470,7 @@ char *flags_string(char *buf, char *end, void *flags_ptr, const char *fmt)
+ 	return format_flags(buf, end, flags, names);
+ }
+ 
+-int kptr_restrict __read_mostly;
++int kptr_restrict __read_mostly = 2;
+ 
+ /*
+  * Show a '%p' thing.  A kernel extension is that the '%p' is followed
+diff --git a/mm/mmap.c b/mm/mmap.c
+index bfbe8856d134..3a76d54a6422 100644
+--- a/mm/mmap.c
++++ b/mm/mmap.c
+@@ -94,7 +94,7 @@ static void unmap_region(struct mm_struct *mm,
+  *								w: (no) no
+  *								x: (yes) yes
+  */
+-pgprot_t protection_map[16] = {
++pgprot_t protection_map[16] __ro_after_init = {
+ 	__P000, __P001, __P010, __P011, __P100, __P101, __P110, __P111,
+ 	__S000, __S001, __S010, __S011, __S100, __S101, __S110, __S111
+ };
+diff --git a/mm/page_alloc.c b/mm/page_alloc.c
+index 07efbc3a8656..279c9385f03b 100644
+--- a/mm/page_alloc.c
++++ b/mm/page_alloc.c
+@@ -65,6 +65,7 @@
+ #include <linux/page_owner.h>
+ #include <linux/kthread.h>
+ #include <linux/memcontrol.h>
++#include <linux/random.h>
+ 
+ #include <asm/sections.h>
+ #include <asm/tlbflush.h>
+@@ -96,6 +97,15 @@ int _node_numa_mem_[MAX_NUMNODES];
+ DEFINE_MUTEX(pcpu_drain_mutex);
+ DEFINE_PER_CPU(struct work_struct, pcpu_drain);
+ 
++bool __meminitdata extra_latent_entropy;
++
++static int __init setup_extra_latent_entropy(char *str)
++{
++	extra_latent_entropy = true;
++	return 0;
++}
++early_param("extra_latent_entropy", setup_extra_latent_entropy);
++
+ #ifdef CONFIG_GCC_PLUGIN_LATENT_ENTROPY
+ volatile unsigned long latent_entropy __latent_entropy;
+ EXPORT_SYMBOL(latent_entropy);
+@@ -1044,6 +1054,13 @@ static __always_inline bool free_pages_prepare(struct page *page,
+ 		debug_check_no_obj_freed(page_address(page),
+ 					   PAGE_SIZE << order);
+ 	}
++
++	if (IS_ENABLED(CONFIG_SANITIZE_PAGE)) {
++		unsigned long index = 1UL << order;
++		for (; index; --index)
++			clear_highpage(page + index - 1);
++	}
++
+ 	arch_free_page(page, order);
+ 	kernel_poison_pages(page, 1 << order, 0);
+ 	kernel_map_pages(page, 1 << order, 0);
+@@ -1268,6 +1285,21 @@ static void __init __free_pages_boot_core(struct page *page, unsigned int order)
+ 	__ClearPageReserved(p);
+ 	set_page_count(p, 0);
+ 
++	if (extra_latent_entropy && !PageHighMem(page) && page_to_pfn(page) < 0x100000) {
++		unsigned long hash = 0;
++		size_t index, end = PAGE_SIZE * nr_pages / sizeof hash;
++		const unsigned long *data = lowmem_page_address(page);
++
++		for (index = 0; index < end; index++)
++			hash ^= hash + data[index];
++#ifdef CONFIG_GCC_PLUGIN_LATENT_ENTROPY
++		latent_entropy ^= hash;
++		add_device_randomness((const void *)&latent_entropy, sizeof(latent_entropy));
++#else
++		add_device_randomness((const void *)&hash, sizeof(hash));
++#endif
++	}
++
+ 	page_zone(page)->managed_pages += nr_pages;
+ 	set_page_refcounted(page);
+ 	__free_pages(page, order);
+@@ -1700,8 +1732,8 @@ static inline int check_new_page(struct page *page)
+ 
+ static inline bool free_pages_prezeroed(bool poisoned)
+ {
+-	return IS_ENABLED(CONFIG_PAGE_POISONING_ZERO) &&
+-		page_poisoning_enabled() && poisoned;
++	return IS_ENABLED(CONFIG_SANITIZE_PAGE) ||
++		(IS_ENABLED(CONFIG_PAGE_POISONING_ZERO) && page_poisoning_enabled() && poisoned);
+ }
+ 
+ #ifdef CONFIG_DEBUG_VM
+@@ -1765,6 +1797,12 @@ static void prep_new_page(struct page *page, unsigned int order, gfp_t gfp_flags
+ 
+ 	post_alloc_hook(page, order, gfp_flags);
+ 
++	if (IS_ENABLED(CONFIG_SANITIZE_PAGE_VERIFY)) {
++		unsigned long index = 1UL << order;
++		for (; index; --index)
++			verify_zero_highpage(page + index - 1);
++	}
++
+ 	if (!free_pages_prezeroed(poisoned) && (gfp_flags & __GFP_ZERO))
+ 		for (i = 0; i < (1 << order); i++)
+ 			clear_highpage(page + i);
+diff --git a/mm/percpu.c b/mm/percpu.c
+index 60a6488e9e6d..62d350f59b51 100644
+--- a/mm/percpu.c
++++ b/mm/percpu.c
+@@ -121,35 +121,35 @@ struct pcpu_chunk {
+ 	unsigned long		populated[];	/* populated bitmap */
+ };
+ 
+-static int pcpu_unit_pages __read_mostly;
+-static int pcpu_unit_size __read_mostly;
+-static int pcpu_nr_units __read_mostly;
+-static int pcpu_atom_size __read_mostly;
+-static int pcpu_nr_slots __read_mostly;
+-static size_t pcpu_chunk_struct_size __read_mostly;
++static int pcpu_unit_pages __ro_after_init;
++static int pcpu_unit_size __ro_after_init;
++static int pcpu_nr_units __ro_after_init;
++static int pcpu_atom_size __ro_after_init;
++static int pcpu_nr_slots __ro_after_init;
++static size_t pcpu_chunk_struct_size __ro_after_init;
+ 
+ /* cpus with the lowest and highest unit addresses */
+-static unsigned int pcpu_low_unit_cpu __read_mostly;
+-static unsigned int pcpu_high_unit_cpu __read_mostly;
++static unsigned int pcpu_low_unit_cpu __ro_after_init;
++static unsigned int pcpu_high_unit_cpu __ro_after_init;
+ 
+ /* the address of the first chunk which starts with the kernel static area */
+-void *pcpu_base_addr __read_mostly;
++void *pcpu_base_addr __ro_after_init;
+ EXPORT_SYMBOL_GPL(pcpu_base_addr);
+ 
+-static const int *pcpu_unit_map __read_mostly;		/* cpu -> unit */
+-const unsigned long *pcpu_unit_offsets __read_mostly;	/* cpu -> unit offset */
++static const int *pcpu_unit_map __ro_after_init;		/* cpu -> unit */
++const unsigned long *pcpu_unit_offsets __ro_after_init;	/* cpu -> unit offset */
+ 
+ /* group information, used for vm allocation */
+-static int pcpu_nr_groups __read_mostly;
+-static const unsigned long *pcpu_group_offsets __read_mostly;
+-static const size_t *pcpu_group_sizes __read_mostly;
++static int pcpu_nr_groups __ro_after_init;
++static const unsigned long *pcpu_group_offsets __ro_after_init;
++static const size_t *pcpu_group_sizes __ro_after_init;
+ 
+ /*
+  * The first chunk which always exists.  Note that unlike other
+  * chunks, this one can be allocated and mapped in several different
+  * ways and thus often doesn't live in the vmalloc area.
+  */
+-static struct pcpu_chunk *pcpu_first_chunk;
++static struct pcpu_chunk *pcpu_first_chunk __ro_after_init;
+ 
+ /*
+  * Optional reserved chunk.  This chunk reserves part of the first
+@@ -158,13 +158,13 @@ static struct pcpu_chunk *pcpu_first_chunk;
+  * area doesn't exist, the following variables contain NULL and 0
+  * respectively.
+  */
+-static struct pcpu_chunk *pcpu_reserved_chunk;
+-static int pcpu_reserved_chunk_limit;
++static struct pcpu_chunk *pcpu_reserved_chunk __ro_after_init;
++static int pcpu_reserved_chunk_limit __ro_after_init;
+ 
+ static DEFINE_SPINLOCK(pcpu_lock);	/* all internal data structures */
+ static DEFINE_MUTEX(pcpu_alloc_mutex);	/* chunk create/destroy, [de]pop, map ext */
+ 
+-static struct list_head *pcpu_slot __read_mostly; /* chunk list slots */
++static struct list_head *pcpu_slot __ro_after_init; /* chunk list slots */
+ 
+ /* chunks which need their map areas extended, protected by pcpu_lock */
+ static LIST_HEAD(pcpu_map_extend_chunks);
+diff --git a/mm/slab.h b/mm/slab.h
+index 65e7c3fcac72..15dd511f509d 100644
+--- a/mm/slab.h
++++ b/mm/slab.h
+@@ -327,7 +327,11 @@ static inline bool is_root_cache(struct kmem_cache *s)
+ static inline bool slab_equal_or_root(struct kmem_cache *s,
+ 				      struct kmem_cache *p)
+ {
++#ifdef CONFIG_SLAB_HARDENED
++	return p == s;
++#else
+ 	return true;
++#endif
+ }
+ 
+ static inline const char *cache_name(struct kmem_cache *s)
+@@ -379,18 +383,26 @@ static inline struct kmem_cache *cache_from_obj(struct kmem_cache *s, void *x)
+ 	 * to not do even the assignment. In that case, slab_equal_or_root
+ 	 * will also be a constant.
+ 	 */
+-	if (!memcg_kmem_enabled() &&
++	if (IS_ENABLED(CONFIG_SLAB_HARDENED) &&
++	    !memcg_kmem_enabled() &&
+ 	    !unlikely(s->flags & SLAB_CONSISTENCY_CHECKS))
+ 		return s;
+ 
+ 	page = virt_to_head_page(x);
++#ifdef CONFIG_SLAB_HARDENED
++	BUG_ON(!PageSlab(page));
++#endif
+ 	cachep = page->slab_cache;
+ 	if (slab_equal_or_root(cachep, s))
+ 		return cachep;
+ 
+ 	pr_err("%s: Wrong slab cache. %s but object is from %s\n",
+ 	       __func__, s->name, cachep->name);
++#ifdef CONFIG_BUG_ON_DATA_CORRUPTION
++	BUG_ON(1);
++#else
+ 	WARN_ON_ONCE(1);
++#endif
+ 	return s;
+ }
+ 
+@@ -415,7 +427,7 @@ static inline size_t slab_ksize(const struct kmem_cache *s)
+ 	 * back there or track user information then we can
+ 	 * only use the space before that information.
+ 	 */
+-	if (s->flags & (SLAB_DESTROY_BY_RCU | SLAB_STORE_USER))
++	if ((s->flags & (SLAB_DESTROY_BY_RCU | SLAB_STORE_USER)) || IS_ENABLED(CONFIG_SLAB_CANARY))
+ 		return s->inuse;
+ 	/*
+ 	 * Else we can use all the padding etc for the allocation
+diff --git a/mm/slab_common.c b/mm/slab_common.c
+index 09d0e849b07f..cbe5b3ad2cba 100644
+--- a/mm/slab_common.c
++++ b/mm/slab_common.c
+@@ -25,7 +25,7 @@
+ 
+ #include "slab.h"
+ 
+-enum slab_state slab_state;
++enum slab_state slab_state __ro_after_init;
+ LIST_HEAD(slab_caches);
+ DEFINE_MUTEX(slab_mutex);
+ struct kmem_cache *kmem_cache;
+@@ -49,7 +49,7 @@ static DECLARE_WORK(slab_caches_to_rcu_destroy_work,
+  * Merge control. If this is set then no merging of slab caches will occur.
+  * (Could be removed. This was introduced to pacify the merge skeptics.)
+  */
+-static int slab_nomerge;
++static int slab_nomerge __ro_after_init = IS_ENABLED(CONFIG_SLAB_HARDENED);
+ 
+ static int __init setup_slab_nomerge(char *str)
+ {
+diff --git a/mm/slub.c b/mm/slub.c
+index 7f4bc7027ed5..90e0fc344163 100644
+--- a/mm/slub.c
++++ b/mm/slub.c
+@@ -34,6 +34,7 @@
+ #include <linux/stacktrace.h>
+ #include <linux/prefetch.h>
+ #include <linux/memcontrol.h>
++#include <linux/random.h>
+ 
+ #include <trace/events/kmem.h>
+ 
+@@ -124,6 +125,11 @@ static inline int kmem_cache_debug(struct kmem_cache *s)
+ #endif
+ }
+ 
++static inline bool can_sanitize(struct kmem_cache *s)
++{
++	return !(s->flags & (SLAB_DESTROY_BY_RCU | SLAB_POISON));
++}
++
+ void *fixup_red_left(struct kmem_cache *s, void *p)
+ {
+ 	if (kmem_cache_debug(s) && s->flags & SLAB_RED_ZONE)
+@@ -240,28 +246,83 @@ static inline void stat(const struct kmem_cache *s, enum stat_item si)
+ 
+ static inline void *get_freepointer(struct kmem_cache *s, void *object)
+ {
++#ifdef CONFIG_SLAB_HARDENED
++	unsigned long freepointer_addr = (unsigned long)object + s->offset;
++	return (void *)(*(unsigned long *)freepointer_addr ^ s->random ^ freepointer_addr);
++#else
+ 	return *(void **)(object + s->offset);
++#endif
+ }
+ 
+ static void prefetch_freepointer(const struct kmem_cache *s, void *object)
+ {
++#ifdef CONFIG_SLAB_HARDENED
++	unsigned long freepointer_addr = (unsigned long)object + s->offset;
++	if (object) {
++		void **freepointer_ptr = (void **)(*(unsigned long *)freepointer_addr ^ s->random ^ freepointer_addr);
++		prefetch(freepointer_ptr);
++	}
++#else
+ 	prefetch(object + s->offset);
++#endif
+ }
+ 
+ static inline void *get_freepointer_safe(struct kmem_cache *s, void *object)
+ {
++	unsigned long __maybe_unused freepointer_addr;
+ 	void *p;
+ 
+ 	if (!debug_pagealloc_enabled())
+ 		return get_freepointer(s, object);
+ 
++#ifdef CONFIG_SLAB_HARDENED
++	freepointer_addr = (unsigned long)object + s->offset;
++	probe_kernel_read(&p, (void **)freepointer_addr, sizeof(p));
++	return (void *)((unsigned long)p ^ s->random ^ freepointer_addr);
++#else
+ 	probe_kernel_read(&p, (void **)(object + s->offset), sizeof(p));
+ 	return p;
++#endif
+ }
+ 
+ static inline void set_freepointer(struct kmem_cache *s, void *object, void *fp)
+ {
++#ifdef CONFIG_SLAB_HARDENED
++	unsigned long freepointer_addr = (unsigned long)object + s->offset;
++	*(void **)freepointer_addr = (void *)((unsigned long)fp ^ s->random ^ freepointer_addr);
++#else
+ 	*(void **)(object + s->offset) = fp;
++#endif
++}
++
++#ifdef CONFIG_64BIT
++static const unsigned long canary_mask = ~0xFFUL;
++#else
++static const unsigned long canary_mask = ~0UL;
++#endif
++
++static inline unsigned long *get_canary(struct kmem_cache *s, void *object)
++{
++	if (s->offset)
++		return object + s->offset + sizeof(void *);
++	else
++		return object + s->inuse;
++}
++
++static inline void set_canary(struct kmem_cache *s, void *object, unsigned long value)
++{
++	if (IS_ENABLED(CONFIG_SLAB_CANARY)) {
++		unsigned long *canary = get_canary(s, object);
++		*canary = (value ^ (unsigned long)canary) & canary_mask;
++	}
++}
++
++static inline void check_canary(struct kmem_cache *s, void *object, unsigned long value)
++{
++	if (IS_ENABLED(CONFIG_SLAB_CANARY)) {
++		unsigned long *canary = get_canary(s, object);
++		BUG_ON(*canary != ((value ^ (unsigned long)canary) & canary_mask));
++	}
+ }
+ 
+ /* Loop over all objects in a slab */
+@@ -451,13 +512,13 @@ static inline void *restore_red_left(struct kmem_cache *s, void *p)
+  * Debug settings:
+  */
+ #if defined(CONFIG_SLUB_DEBUG_ON)
+-static int slub_debug = DEBUG_DEFAULT_FLAGS;
++static int slub_debug __ro_after_init = DEBUG_DEFAULT_FLAGS;
+ #else
+-static int slub_debug;
++static int slub_debug __ro_after_init;
+ #endif
+ 
+-static char *slub_debug_slabs;
+-static int disable_higher_order_debug;
++static char *slub_debug_slabs __ro_after_init;
++static int disable_higher_order_debug __ro_after_init;
+ 
+ /*
+  * slub is about to manipulate internal object metadata.  This memory lies
+@@ -517,6 +578,9 @@ static struct track *get_track(struct kmem_cache *s, void *object,
+ 	else
+ 		p = object + s->inuse;
+ 
++	if (IS_ENABLED(CONFIG_SLAB_CANARY))
++		p = (void *)p + sizeof(void *);
++
+ 	return p + alloc;
+ }
+ 
+@@ -655,6 +719,9 @@ static void print_trailer(struct kmem_cache *s, struct page *page, u8 *p)
+ 	else
+ 		off = s->inuse;
+ 
++	if (IS_ENABLED(CONFIG_SLAB_CANARY))
++		off += sizeof(void *);
++
+ 	if (s->flags & SLAB_STORE_USER)
+ 		off += 2 * sizeof(struct track);
+ 
+@@ -784,6 +851,9 @@ static int check_pad_bytes(struct kmem_cache *s, struct page *page, u8 *p)
+ 		/* Freepointer is placed after the object. */
+ 		off += sizeof(void *);
+ 
++	if (IS_ENABLED(CONFIG_SLAB_CANARY))
++		off += sizeof(void *);
++
+ 	if (s->flags & SLAB_STORE_USER)
+ 		/* We also have user information there */
+ 		off += 2 * sizeof(struct track);
+@@ -1385,6 +1455,7 @@ static void setup_object(struct kmem_cache *s, struct page *page,
+ 				void *object)
+ {
+ 	setup_object_debug(s, page, object);
++	set_canary(s, object, s->random_inactive);
+ 	kasan_init_slab_obj(s, object);
+ 	if (unlikely(s->ctor)) {
+ 		kasan_unpoison_object_data(s, object);
+@@ -2712,9 +2783,19 @@ static __always_inline void *slab_alloc_node(struct kmem_cache *s,
+ 		stat(s, ALLOC_FASTPATH);
+ 	}
+ 
++	if (IS_ENABLED(CONFIG_SLAB_SANITIZE_VERIFY) && can_sanitize(s) && !s->ctor && object) {
++		size_t offset = s->offset ? 0 : sizeof(void *);
++		BUG_ON(memchr_inv(object + offset, 0, s->object_size - offset));
++	}
++
+ 	if (unlikely(gfpflags & __GFP_ZERO) && object)
+ 		memset(object, 0, s->object_size);
+ 
++	if (object) {
++		check_canary(s, object, s->random_inactive);
++		set_canary(s, object, s->random_active);
++	}
++
+ 	slab_post_alloc_hook(s, gfpflags, 1, &object);
+ 
+ 	return object;
+@@ -2921,6 +3002,29 @@ static __always_inline void do_slab_free(struct kmem_cache *s,
+ 	void *tail_obj = tail ? : head;
+ 	struct kmem_cache_cpu *c;
+ 	unsigned long tid;
++	bool sanitize = IS_ENABLED(CONFIG_SLAB_SANITIZE) && can_sanitize(s);
++
++	if (IS_ENABLED(CONFIG_SLAB_CANARY) || sanitize) {
++		__maybe_unused int offset = s->offset ? 0 : sizeof(void *);
++		void *x = head;
++
++		while (1) {
++			if (IS_ENABLED(CONFIG_SLAB_CANARY)) {
++				check_canary(s, x, s->random_active);
++				set_canary(s, x, s->random_inactive);
++			}
++
++			if (sanitize) {
++				memset(x + offset, 0, s->object_size - offset);
++				if (s->ctor)
++					s->ctor(x);
++			}
++			if (x == tail_obj)
++				break;
++			x = get_freepointer(s, x);
++		}
++	}
++
+ redo:
+ 	/*
+ 	 * Determine the currently cpus per cpu slab.
+@@ -3099,7 +3203,7 @@ int kmem_cache_alloc_bulk(struct kmem_cache *s, gfp_t flags, size_t size,
+ 			  void **p)
+ {
+ 	struct kmem_cache_cpu *c;
+-	int i;
++	int i, k;
+ 
+ 	/* memcg and kmem_cache debug support */
+ 	s = slab_pre_alloc_hook(s, flags);
+@@ -3135,6 +3239,15 @@ int kmem_cache_alloc_bulk(struct kmem_cache *s, gfp_t flags, size_t size,
+ 	c->tid = next_tid(c->tid);
+ 	local_irq_enable();
+ 
++	if (IS_ENABLED(CONFIG_SLAB_SANITIZE_VERIFY) && can_sanitize(s) && !s->ctor) {
++		int j;
++
++		for (j = 0; j < i; j++) {
++			size_t offset = s->offset ? 0 : sizeof(void *);
++			BUG_ON(memchr_inv(p[j] + offset, 0, s->object_size - offset));
++		}
++	}
++
+ 	/* Clear memory outside IRQ disabled fastpath loop */
+ 	if (unlikely(flags & __GFP_ZERO)) {
+ 		int j;
+@@ -3143,6 +3256,11 @@ int kmem_cache_alloc_bulk(struct kmem_cache *s, gfp_t flags, size_t size,
+ 			memset(p[j], 0, s->object_size);
+ 	}
+ 
++	for (k = 0; k < i; k++) {
++		check_canary(s, p[k], s->random_inactive);
++		set_canary(s, p[k], s->random_active);
++	}
++
+ 	/* memcg and kmem_cache debug support */
+ 	slab_post_alloc_hook(s, flags, size, p);
+ 	return i;
+@@ -3346,6 +3464,7 @@ static void early_kmem_cache_node_alloc(int node)
+ 	init_object(kmem_cache_node, n, SLUB_RED_ACTIVE);
+ 	init_tracking(kmem_cache_node, n);
+ #endif
++	set_canary(kmem_cache_node, n, kmem_cache_node->random_active);
+ 	kasan_kmalloc(kmem_cache_node, n, sizeof(struct kmem_cache_node),
+ 		      GFP_KERNEL);
+ 	init_kmem_cache_node(n);
+@@ -3469,6 +3588,9 @@ static int calculate_sizes(struct kmem_cache *s, int forced_order)
+ 		size += sizeof(void *);
+ 	}
+ 
++	if (IS_ENABLED(CONFIG_SLAB_CANARY))
++		size += sizeof(void *);
++
+ #ifdef CONFIG_SLUB_DEBUG
+ 	if (flags & SLAB_STORE_USER)
+ 		/*
+@@ -3535,6 +3657,13 @@ static int calculate_sizes(struct kmem_cache *s, int forced_order)
+ static int kmem_cache_open(struct kmem_cache *s, unsigned long flags)
+ {
+ 	s->flags = kmem_cache_flags(s->size, flags, s->name, s->ctor);
++#ifdef CONFIG_SLAB_HARDENED
++	s->random = get_random_long();
++#endif
++#ifdef CONFIG_SLAB_CANARY
++	s->random_active = get_random_long();
++	s->random_inactive = get_random_long();
++#endif
+ 	s->reserved = 0;
+ 
+ 	if (need_reserve_slab_rcu && (s->flags & SLAB_DESTROY_BY_RCU))
+@@ -3826,6 +3955,8 @@ const char *__check_heap_object(const void *ptr, unsigned long n,
+ 		offset -= s->red_left_pad;
+ 	}
+ 
++	check_canary(s, (void *)ptr - offset, s->random_active);
++
+ 	/* Allow address range falling entirely within object size. */
+ 	if (offset <= object_size && n <= object_size - offset)
+ 		return NULL;
+@@ -3844,7 +3975,11 @@ static size_t __ksize(const void *object)
+ 	page = virt_to_head_page(object);
+ 
+ 	if (unlikely(!PageSlab(page))) {
++#ifdef CONFIG_BUG_ON_DATA_CORRUPTION
++		BUG_ON(!PageCompound(page));
++#else
+ 		WARN_ON(!PageCompound(page));
++#endif
+ 		return PAGE_SIZE << compound_order(page);
+ 	}
+ 
+diff --git a/security/Kconfig b/security/Kconfig
+index d900f47eaa68..34fb609b372d 100644
+--- a/security/Kconfig
++++ b/security/Kconfig
+@@ -8,7 +8,7 @@ source security/keys/Kconfig
+ 
+ config SECURITY_DMESG_RESTRICT
+ 	bool "Restrict unprivileged access to the kernel syslog"
+-	default n
++	default y
+ 	help
+ 	  This enforces restrictions on unprivileged users reading the kernel
+ 	  syslog via dmesg(8).
+@@ -18,6 +18,29 @@ config SECURITY_DMESG_RESTRICT
+ 
+ 	  If you are unsure how to answer this question, answer N.
+ 
++config SECURITY_TIOCSTI_RESTRICT
++	bool "Restrict unprivileged use of tiocsti command injection"
++	default y
++	help
++	  This enforces restrictions on unprivileged users injecting commands
++	  into other processes which share a tty session using the TIOCSTI
++	  ioctl. This option makes TIOCSTI use require CAP_SYS_ADMIN.
++
++	  If this option is not selected, no restrictions will be enforced
++	  unless the tiocsti_restrict sysctl is explicitly set to (1).
++
++	  If you are unsure how to answer this question, answer N.
++
++config SECURITY_PERF_EVENTS_RESTRICT
++	bool "Restrict unprivileged use of performance events"
++	default y
++	depends on PERF_EVENTS
++	help
++	  If you say Y here, the kernel.perf_event_paranoid sysctl
++	  will be set to 3 by default, and no unprivileged use of the
++	  perf_event_open syscall will be permitted unless it is
++	  changed.
++
+ config SECURITY
+ 	bool "Enable different security models"
+ 	depends on SYSFS
+@@ -158,6 +181,29 @@ config HARDENED_USERCOPY_PAGESPAN
+ 	  been removed. This config is intended to be used only while
+ 	  trying to find such users.
+ 
++config FORTIFY_SOURCE
++	bool "Harden common functions against buffer overflows"
++	default y
++	help
++	  Detect overflows of buffers in common functions where the compiler
++	  can determine the buffer size.
++
++config SANITIZE_PAGE
++	bool "Sanitize pages"
++	default y
++	help
++	  Zero fill page allocations on free, reducing the lifetime of
++	  sensitive data and helping to mitigate use-after-free bugs.
++
++config SANITIZE_PAGE_VERIFY
++	bool "Verify sanitized pages"
++	default y
++	depends on SANITIZE_PAGE
++	depends on !HIBERNATION
++	help
++	  Verify that newly allocated pages are zeroed to detect
++	  write-after-free bugs.
++
+ config STATIC_USERMODEHELPER
+ 	bool "Force all usermode helper calls through a single binary"
+ 	help
