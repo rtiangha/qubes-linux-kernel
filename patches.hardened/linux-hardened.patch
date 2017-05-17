@@ -676,6 +676,32 @@ index e6d1a6510886..fe68d1424879 100644
  
  	return tty;
  }
+diff --git a/drivers/usb/core/hub.c b/drivers/usb/core/hub.c
+index 5286bf67869a..9f21d57689bc 100644
+--- a/drivers/usb/core/hub.c
++++ b/drivers/usb/core/hub.c
+@@ -38,6 +38,8 @@
+ #define USB_VENDOR_GENESYS_LOGIC		0x05e3
+ #define HUB_QUIRK_CHECK_PORT_AUTOSUSPEND	0x01
+ 
++int deny_new_usb __read_mostly = 0;
++
+ /* Protect struct usb_device->state and ->children members
+  * Note: Both are also protected by ->dev.sem, except that ->state can
+  * change to USB_STATE_NOTATTACHED even when the semaphore isn't held. */
+@@ -4762,6 +4764,12 @@ static void hub_port_connect(struct usb_hub *hub, int port1, u16 portstatus,
+ 			goto done;
+ 		return;
+ 	}
++
++	if (deny_new_usb) {
++		dev_err(&port_dev->dev, "denied insert of USB device on port %d\n", port1);
++		goto done;
++	}
++
+ 	if (hub_is_superspeed(hub->hdev))
+ 		unit_load = 150;
+ 	else
 diff --git a/fs/exec.c b/fs/exec.c
 index 65145a3df065..55d34442bbc0 100644
 --- a/fs/exec.c
@@ -710,6 +736,45 @@ index 73b84baf58f8..ce1b5d5d280c 100644
  
  /* Maximum allocatable pages per user. Hard limit is unset by default, soft
   * matches default values.
+diff --git a/fs/stat.c b/fs/stat.c
+index a257b872a53d..662cf4bc0346 100644
+--- a/fs/stat.c
++++ b/fs/stat.c
+@@ -38,9 +38,13 @@ void generic_fillattr(struct inode *inode, struct kstat *stat)
+ 	stat->gid = inode->i_gid;
+ 	stat->rdev = inode->i_rdev;
+ 	stat->size = i_size_read(inode);
+-	stat->atime = inode->i_atime;
+-	stat->mtime = inode->i_mtime;
+-	stat->ctime = inode->i_ctime;
++	if (is_sidechannel_device(inode) && !capable_noaudit(CAP_MKNOD)) {
++		stat->atime = inode->i_ctime;
++		stat->mtime = inode->i_ctime;
++	} else {
++		stat->atime = inode->i_atime;
++		stat->mtime = inode->i_mtime;
++	}
+ 	stat->blksize = i_blocksize(inode);
+ 	stat->blocks = inode->i_blocks;
+ 
+@@ -73,9 +77,14 @@ int vfs_getattr_nosec(const struct path *path, struct kstat *stat,
+ 	stat->result_mask |= STATX_BASIC_STATS;
+ 	request_mask &= STATX_ALL;
+ 	query_flags &= KSTAT_QUERY_FLAGS;
+-	if (inode->i_op->getattr)
+-		return inode->i_op->getattr(path, stat, request_mask,
+-					    query_flags);
++	if (inode->i_op->getattr) {
++		int retval = inode->i_op->getattr(path, stat, request_mask, query_flags);
++		if (!retval && is_sidechannel_device(inode) && !capable_noaudit(CAP_MKNOD)) {
++			stat->atime = stat->ctime;
++			stat->mtime = stat->ctime;
++		}
++		return retval;
++	}
+ 
+ 	generic_fillattr(inode, stat);
+ 	return 0;
 diff --git a/include/linux/cache.h b/include/linux/cache.h
 index 1be04f8c563a..bb1226616bdc 100644
 --- a/include/linux/cache.h
@@ -723,6 +788,73 @@ index 1be04f8c563a..bb1226616bdc 100644
  #ifndef ____cacheline_aligned
  #define ____cacheline_aligned __attribute__((__aligned__(SMP_CACHE_BYTES)))
  #endif
+diff --git a/include/linux/capability.h b/include/linux/capability.h
+index 6ffb67e10c06..8b385769b88e 100644
+--- a/include/linux/capability.h
++++ b/include/linux/capability.h
+@@ -206,6 +206,7 @@ extern bool has_capability_noaudit(struct task_struct *t, int cap);
+ extern bool has_ns_capability_noaudit(struct task_struct *t,
+ 				      struct user_namespace *ns, int cap);
+ extern bool capable(int cap);
++extern bool capable_noaudit(int cap);
+ extern bool ns_capable(struct user_namespace *ns, int cap);
+ extern bool ns_capable_noaudit(struct user_namespace *ns, int cap);
+ #else
+@@ -231,6 +232,10 @@ static inline bool capable(int cap)
+ {
+ 	return true;
+ }
++static inline bool capable_noaudit(int cap)
++{
++	return true;
++}
+ static inline bool ns_capable(struct user_namespace *ns, int cap)
+ {
+ 	return true;
+diff --git a/include/linux/fs.h b/include/linux/fs.h
+index 7251f7bb45e8..811a1c587cb3 100644
+--- a/include/linux/fs.h
++++ b/include/linux/fs.h
+@@ -3217,4 +3217,15 @@ static inline bool dir_relax_shared(struct inode *inode)
+ extern bool path_noexec(const struct path *path);
+ extern void inode_nohighmem(struct inode *inode);
+ 
++extern int device_sidechannel_restrict;
++
++static inline bool is_sidechannel_device(const struct inode *inode)
++{
++	umode_t mode;
++	if (!device_sidechannel_restrict)
++		return false;
++	mode = inode->i_mode;
++	return ((S_ISCHR(mode) || S_ISBLK(mode)) && (mode & (S_IROTH | S_IWOTH)));
++}
++
+ #endif /* _LINUX_FS_H */
+diff --git a/include/linux/fsnotify.h b/include/linux/fsnotify.h
+index b43d3f5bd9ea..f256cce1d9f2 100644
+--- a/include/linux/fsnotify.h
++++ b/include/linux/fsnotify.h
+@@ -180,6 +180,9 @@ static inline void fsnotify_access(struct file *file)
+ 	struct inode *inode = path->dentry->d_inode;
+ 	__u32 mask = FS_ACCESS;
+ 
++	if (is_sidechannel_device(inode))
++		return;
++
+ 	if (S_ISDIR(inode->i_mode))
+ 		mask |= FS_ISDIR;
+ 
+@@ -198,6 +201,9 @@ static inline void fsnotify_modify(struct file *file)
+ 	struct inode *inode = path->dentry->d_inode;
+ 	__u32 mask = FS_MODIFY;
+ 
++	if (is_sidechannel_device(inode))
++		return;
++
+ 	if (S_ISDIR(inode->i_mode))
+ 		mask |= FS_ISDIR;
+ 
 diff --git a/include/linux/gfp.h b/include/linux/gfp.h
 index db373b9d3223..8e67d5c3df10 100644
 --- a/include/linux/gfp.h
@@ -1222,6 +1354,23 @@ index a92f27da4a27..4ae775d40719 100644
  config SLUB_CPU_PARTIAL
  	default y
  	depends on SLUB && SMP
+diff --git a/kernel/capability.c b/kernel/capability.c
+index f97fe77ceb88..916c159f2f08 100644
+--- a/kernel/capability.c
++++ b/kernel/capability.c
+@@ -430,6 +430,12 @@ bool capable(int cap)
+ 	return ns_capable(&init_user_ns, cap);
+ }
+ EXPORT_SYMBOL(capable);
++
++bool capable_noaudit(int cap)
++{
++	return ns_capable_noaudit(&init_user_ns, cap);
++}
++EXPORT_SYMBOL(capable_noaudit);
+ #endif /* CONFIG_MULTIUSER */
+ 
+ /**
 diff --git a/kernel/events/core.c b/kernel/events/core.c
 index ff01cba86f43..c75a126e71a2 100644
 --- a/kernel/events/core.c
@@ -1336,7 +1485,7 @@ index 799a8a452187..50dfcb039a41 100644
  static inline void kimage_file_post_load_cleanup(struct kimage *image) { }
  #endif /* CONFIG_KEXEC_FILE */
 diff --git a/kernel/sysctl.c b/kernel/sysctl.c
-index 8c8714fcb53c..7d3ecef2133a 100644
+index 8c8714fcb53c..e1c52497c7ef 100644
 --- a/kernel/sysctl.c
 +++ b/kernel/sysctl.c
 @@ -67,6 +67,7 @@
@@ -1347,7 +1496,16 @@ index 8c8714fcb53c..7d3ecef2133a 100644
  
  #include <linux/uaccess.h>
  #include <asm/processor.h>
-@@ -105,6 +106,9 @@ extern int core_uses_pid;
+@@ -99,12 +100,18 @@
+ #if defined(CONFIG_SYSCTL)
+ 
+ /* External variables not in a header file. */
++#ifdef CONFIG_USB
++extern int deny_new_usb;
++#endif
+ extern int suid_dumpable;
+ #ifdef CONFIG_COREDUMP
+ extern int core_uses_pid;
  extern char core_pattern[];
  extern unsigned int core_pipe_limit;
  #endif
@@ -1357,7 +1515,7 @@ index 8c8714fcb53c..7d3ecef2133a 100644
  extern int pid_max;
  extern int pid_max_min, pid_max_max;
  extern int percpu_pagelist_fraction;
-@@ -116,38 +120,38 @@ extern int sysctl_nr_trim_pages;
+@@ -116,40 +123,43 @@ extern int sysctl_nr_trim_pages;
  
  /* Constants used for minimum and  maximum */
  #ifdef CONFIG_LOCKUP_DETECTOR
@@ -1410,8 +1568,13 @@ index 8c8714fcb53c..7d3ecef2133a 100644
 +static unsigned long hung_task_timeout_max __read_only = (LONG_MAX/HZ);
  #endif
  
++int device_sidechannel_restrict = 1;
++EXPORT_SYMBOL(device_sidechannel_restrict);
++
  #ifdef CONFIG_INOTIFY_USER
-@@ -266,19 +270,19 @@ static struct ctl_table sysctl_base_table[] = {
+ #include <linux/inotify.h>
+ #endif
+@@ -266,19 +276,19 @@ static struct ctl_table sysctl_base_table[] = {
  };
  
  #ifdef CONFIG_SCHED_DEBUG
@@ -1439,7 +1602,7 @@ index 8c8714fcb53c..7d3ecef2133a 100644
  #endif
  
  static struct ctl_table kern_table[] = {
-@@ -491,6 +495,15 @@ static struct ctl_table kern_table[] = {
+@@ -491,6 +501,15 @@ static struct ctl_table kern_table[] = {
  		.proc_handler	= proc_dointvec,
  	},
  #endif
@@ -1455,7 +1618,7 @@ index 8c8714fcb53c..7d3ecef2133a 100644
  #ifdef CONFIG_PROC_SYSCTL
  	{
  		.procname	= "tainted",
-@@ -833,6 +846,17 @@ static struct ctl_table kern_table[] = {
+@@ -833,6 +852,37 @@ static struct ctl_table kern_table[] = {
  		.extra2		= &two,
  	},
  #endif
@@ -1470,6 +1633,26 @@ index 8c8714fcb53c..7d3ecef2133a 100644
 +		.extra2		= &one,
 +	},
 +#endif
++#ifdef CONFIG_USB
++	{
++		.procname	= "deny_new_usb",
++		.data		= &deny_new_usb,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= proc_dointvec_minmax_sysadmin,
++		.extra1		= &zero,
++		.extra2		= &one,
++	},
++#endif
++	{
++		.procname	= "device_sidechannel_restrict",
++		.data		= &device_sidechannel_restrict,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= proc_dointvec_minmax_sysadmin,
++		.extra1		= &zero,
++		.extra2		= &one,
++	},
  	{
  		.procname	= "ngroups_max",
  		.data		= &ngroups_max,
