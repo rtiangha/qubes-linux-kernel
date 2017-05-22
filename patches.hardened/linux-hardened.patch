@@ -96,6 +96,42 @@ index cd211a14a88f..616eae29a214 100644
  	depends on HAVE_ARCH_MMAP_RND_COMPAT_BITS
  	help
  	  This value can be used to select the number of bits to use to
+diff --git a/arch/arm64/include/asm/elf.h b/arch/arm64/include/asm/elf.h
+index 5d1700425efe..eb14c195af61 100644
+--- a/arch/arm64/include/asm/elf.h
++++ b/arch/arm64/include/asm/elf.h
+@@ -118,7 +118,7 @@
+  * the loader.  We need to make sure that it is out of the way of the program
+  * that it will "exec", and that there is sufficient room for the brk.
+  */
+-#define ELF_ET_DYN_BASE	(2 * TASK_SIZE_64 / 3)
++#define ELF_ET_DYN_BASE	(U32_MAX)
+ 
+ #ifndef __ASSEMBLY__
+ 
+@@ -159,10 +159,10 @@ extern int arch_setup_additional_pages(struct linux_binprm *bprm,
+ /* 1GB of VA */
+ #ifdef CONFIG_COMPAT
+ #define STACK_RND_MASK			(test_thread_flag(TIF_32BIT) ? \
+-						0x7ff >> (PAGE_SHIFT - 12) : \
+-						0x3ffff >> (PAGE_SHIFT - 12))
++						((1UL << mmap_rnd_compat_bits) - 1) >> (PAGE_SHIFT - 12) : \
++						((1UL << mmap_rnd_bits) - 1) >> (PAGE_SHIFT - 12))
+ #else
+-#define STACK_RND_MASK			(0x3ffff >> (PAGE_SHIFT - 12))
++#define STACK_RND_MASK			(((1UL << mmap_rnd_bits) - 1) >> (PAGE_SHIFT - 12))
+ #endif
+ 
+ #ifdef __AARCH64EB__
+@@ -173,7 +173,7 @@ extern int arch_setup_additional_pages(struct linux_binprm *bprm,
+ 
+ #ifdef CONFIG_COMPAT
+ 
+-#define COMPAT_ELF_ET_DYN_BASE		(2 * TASK_SIZE_32 / 3)
++#define COMPAT_ELF_ET_DYN_BASE		(0x10000000UL)
+ 
+ /* AArch32 registers. */
+ #define COMPAT_ELF_NGREG		18
 diff --git a/arch/arm64/include/asm/stackprotector.h b/arch/arm64/include/asm/stackprotector.h
 index fe5e287dc56b..818d1ad9440a 100644
 --- a/arch/arm64/include/asm/stackprotector.h
@@ -166,6 +202,29 @@ index 41b6e31f8f55..ae35f1855e06 100644
  
  	for (i = 0; i < vdso_pages; i++)
  		vdso_pagelist[i + 1] = pfn_to_page(pfn + i);
+diff --git a/arch/arm64/mm/mmap.c b/arch/arm64/mm/mmap.c
+index 7b0d55756eb1..6ac019f8c7df 100644
+--- a/arch/arm64/mm/mmap.c
++++ b/arch/arm64/mm/mmap.c
+@@ -34,7 +34,7 @@
+  * Leave enough space between the mmap area and the stack to honour ulimit in
+  * the face of randomisation.
+  */
+-#define MIN_GAP (SZ_128M + ((STACK_RND_MASK << PAGE_SHIFT) + 1))
++#define MIN_GAP (SZ_128M)
+ #define MAX_GAP	(STACK_TOP/6*5)
+ 
+ static int mmap_is_legacy(void)
+@@ -64,6 +64,9 @@ unsigned long arch_mmap_rnd(void)
+ static unsigned long mmap_base(unsigned long rnd)
+ {
+ 	unsigned long gap = rlimit(RLIMIT_STACK);
++	unsigned long pad = STACK_RND_MASK << PAGE_SHIFT;
++	if (gap + pad > gap)
++		gap += pad;
+ 
+ 	if (gap < MIN_GAP)
+ 		gap = MIN_GAP;
 diff --git a/arch/x86/Kconfig b/arch/x86/Kconfig
 index cc98d5a294ee..84e5476357fd 100644
 --- a/arch/x86/Kconfig
@@ -333,10 +392,42 @@ index 226ca70dc6bd..8a42db347a79 100644
  #endif
  
 diff --git a/arch/x86/include/asm/elf.h b/arch/x86/include/asm/elf.h
-index 3762536619f8..35801ab355f1 100644
+index 3762536619f8..cf7fcb5eaf01 100644
 --- a/arch/x86/include/asm/elf.h
 +++ b/arch/x86/include/asm/elf.h
-@@ -371,5 +371,4 @@ struct va_alignment {
+@@ -250,7 +250,11 @@ extern int force_personality32;
+    the loader.  We need to make sure that it is out of the way of the program
+    that it will "exec", and that there is sufficient room for the brk.  */
+ 
+-#define ELF_ET_DYN_BASE		(TASK_SIZE / 3 * 2)
++#ifdef CONFIG_X86_32
++#define ELF_ET_DYN_BASE		0x10000000UL
++#else
++#define ELF_ET_DYN_BASE		(test_thread_flag(TIF_ADDR32) ? 0x10000000UL : U32_MAX)
++#endif
+ 
+ /* This yields a mask that user programs can use to figure out what
+    instruction set this CPU supports.  This could be done in user space,
+@@ -295,7 +299,7 @@ do {									\
+ 
+ #ifdef CONFIG_X86_32
+ 
+-#define STACK_RND_MASK (0x7ff)
++#define STACK_RND_MASK ((1UL << mmap_rnd_bits) - 1)
+ 
+ #define ARCH_DLINFO		ARCH_DLINFO_IA32
+ 
+@@ -303,8 +307,7 @@ do {									\
+ 
+ #else /* CONFIG_X86_32 */
+ 
+-/* 1GB for 64bit, 8MB for 32bit */
+-#define STACK_RND_MASK (test_thread_flag(TIF_ADDR32) ? 0x7ff : 0x3fffff)
++#define STACK_RND_MASK (test_thread_flag(TIF_ADDR32) ? (1UL << mmap_rnd_compat_bits) - 1 : (1UL << mmap_rnd_bits) - 1)
+ 
+ #define ARCH_DLINFO							\
+ do {									\
+@@ -371,5 +374,4 @@ struct va_alignment {
  } ____cacheline_aligned;
  
  extern struct va_alignment va_align;
@@ -501,6 +592,29 @@ index 15173d37f399..c2298a542fc4 100644
  
  	/*
  	 * The rodata/data/bss/brk section (but not the kernel text!)
+diff --git a/arch/x86/mm/mmap.c b/arch/x86/mm/mmap.c
+index 7940166c799b..7b3e4c5d760f 100644
+--- a/arch/x86/mm/mmap.c
++++ b/arch/x86/mm/mmap.c
+@@ -52,7 +52,7 @@ static unsigned long stack_maxrandom_size(void)
+  *
+  * Leave an at least ~128 MB hole with possible stack randomization.
+  */
+-#define MIN_GAP (128*1024*1024UL + stack_maxrandom_size())
++#define MIN_GAP (128*1024*1024UL)
+ #define MAX_GAP (TASK_SIZE/6*5)
+ 
+ static int mmap_is_legacy(void)
+@@ -85,6 +85,9 @@ unsigned long arch_mmap_rnd(void)
+ static unsigned long mmap_base(unsigned long rnd)
+ {
+ 	unsigned long gap = rlimit(RLIMIT_STACK);
++	unsigned long pad = stack_maxrandom_size();
++	if (gap + pad > gap)
++		gap += pad;
+ 
+ 	if (gap < MIN_GAP)
+ 		gap = MIN_GAP;
 diff --git a/arch/x86/power/hibernate_64.c b/arch/x86/power/hibernate_64.c
 index ded2e8272382..86a7a08516ff 100644
 --- a/arch/x86/power/hibernate_64.c
@@ -703,7 +817,7 @@ index 9dca59ef18b3..41c7c6a8c95a 100644
  		unit_load = 150;
  	else
 diff --git a/fs/exec.c b/fs/exec.c
-index 65145a3df065..55d34442bbc0 100644
+index 65145a3df065..bc0033b7aa65 100644
 --- a/fs/exec.c
 +++ b/fs/exec.c
 @@ -62,6 +62,7 @@
@@ -719,7 +833,7 @@ index 65145a3df065..55d34442bbc0 100644
  	up_write(&mm->mmap_sem);
  	bprm->p = vma->vm_end - sizeof(void *);
 +	if (randomize_va_space)
-+		bprm->p ^= (get_random_long() & ~15) & ~PAGE_MASK;
++		bprm->p ^= get_random_long() & ~PAGE_MASK;
  	return 0;
  err:
  	up_write(&mm->mmap_sem);
@@ -1293,7 +1407,7 @@ index d68edffbf142..764d10707d87 100644
  extern void vfree(const void *addr);
  extern void vfree_atomic(const void *addr);
 diff --git a/init/Kconfig b/init/Kconfig
-index a92f27da4a27..4ae775d40719 100644
+index a92f27da4a27..bef3601fbeb6 100644
 --- a/init/Kconfig
 +++ b/init/Kconfig
 @@ -1783,7 +1783,7 @@ config VM_EVENT_COUNTERS
@@ -1362,7 +1476,7 @@ index a92f27da4a27..4ae775d40719 100644
 +
 +config SLAB_SANITIZE_VERIFY
 +	default y
-+	depends on SLAB_SANITIZE && SANITIZE_PAGE
++	depends on SLAB_SANITIZE && PAGE_SANITIZE
 +	depends on !HIBERNATION
 +	bool "Verify sanitized SLAB allocations"
 +	help
@@ -1771,7 +1885,7 @@ index bfbe8856d134..3a76d54a6422 100644
  	__S000, __S001, __S010, __S011, __S100, __S101, __S110, __S111
  };
 diff --git a/mm/page_alloc.c b/mm/page_alloc.c
-index c5fee5a0316d..fde72abf323b 100644
+index c5fee5a0316d..3d7b75876120 100644
 --- a/mm/page_alloc.c
 +++ b/mm/page_alloc.c
 @@ -65,6 +65,7 @@
@@ -1803,7 +1917,7 @@ index c5fee5a0316d..fde72abf323b 100644
  					   PAGE_SIZE << order);
  	}
 +
-+	if (IS_ENABLED(CONFIG_SANITIZE_PAGE)) {
++	if (IS_ENABLED(CONFIG_PAGE_SANITIZE)) {
 +		unsigned long index = 1UL << order;
 +		for (; index; --index)
 +			clear_highpage(page + index - 1);
@@ -1840,7 +1954,7 @@ index c5fee5a0316d..fde72abf323b 100644
  {
 -	return IS_ENABLED(CONFIG_PAGE_POISONING_ZERO) &&
 -		page_poisoning_enabled() && poisoned;
-+	return IS_ENABLED(CONFIG_SANITIZE_PAGE) ||
++	return IS_ENABLED(CONFIG_PAGE_SANITIZE) ||
 +		(IS_ENABLED(CONFIG_PAGE_POISONING_ZERO) && page_poisoning_enabled() && poisoned);
  }
  
@@ -1849,7 +1963,7 @@ index c5fee5a0316d..fde72abf323b 100644
  
  	post_alloc_hook(page, order, gfp_flags);
  
-+	if (IS_ENABLED(CONFIG_SANITIZE_PAGE_VERIFY)) {
++	if (IS_ENABLED(CONFIG_PAGE_SANITIZE_VERIFY)) {
 +		unsigned long index = 1UL << order;
 +		for (; index; --index)
 +			verify_zero_highpage(page + index - 1);
@@ -2006,7 +2120,7 @@ index 09d0e849b07f..cbe5b3ad2cba 100644
  static int __init setup_slab_nomerge(char *str)
  {
 diff --git a/mm/slub.c b/mm/slub.c
-index 7f4bc7027ed5..9c35bb1bccf0 100644
+index 7f4bc7027ed5..fade6ece439c 100644
 --- a/mm/slub.c
 +++ b/mm/slub.c
 @@ -34,6 +34,7 @@
@@ -2017,19 +2131,24 @@ index 7f4bc7027ed5..9c35bb1bccf0 100644
  
  #include <trace/events/kmem.h>
  
-@@ -124,6 +125,11 @@ static inline int kmem_cache_debug(struct kmem_cache *s)
+@@ -124,6 +125,16 @@ static inline int kmem_cache_debug(struct kmem_cache *s)
  #endif
  }
  
-+static inline bool can_sanitize(struct kmem_cache *s)
++static inline bool has_sanitize(struct kmem_cache *s)
 +{
-+	return !(s->flags & (SLAB_DESTROY_BY_RCU | SLAB_POISON));
++	return IS_ENABLED(CONFIG_SLAB_SANITIZE) && !(s->flags & (SLAB_DESTROY_BY_RCU | SLAB_POISON));
++}
++
++static inline bool has_sanitize_verify(struct kmem_cache *s)
++{
++	return IS_ENABLED(CONFIG_SLAB_SANITIZE_VERIFY) && has_sanitize(s);
 +}
 +
  void *fixup_red_left(struct kmem_cache *s, void *p)
  {
  	if (kmem_cache_debug(s) && s->flags & SLAB_RED_ZONE)
-@@ -240,28 +246,91 @@ static inline void stat(const struct kmem_cache *s, enum stat_item si)
+@@ -240,28 +251,90 @@ static inline void stat(const struct kmem_cache *s, enum stat_item si)
  
  static inline void *get_freepointer(struct kmem_cache *s, void *object)
  {
@@ -2086,8 +2205,7 @@ index 7f4bc7027ed5..9c35bb1bccf0 100644
 +{
 +	if (s->offset)
 +		return object + s->offset + sizeof(void *);
-+	else
-+		return object + s->inuse;
++	return object + s->inuse;
 +}
 +
 +static inline unsigned long get_canary_value(const void *canary, unsigned long value)
@@ -2121,7 +2239,7 @@ index 7f4bc7027ed5..9c35bb1bccf0 100644
  }
  
  /* Loop over all objects in a slab */
-@@ -451,13 +520,13 @@ static inline void *restore_red_left(struct kmem_cache *s, void *p)
+@@ -451,13 +524,13 @@ static inline void *restore_red_left(struct kmem_cache *s, void *p)
   * Debug settings:
   */
  #if defined(CONFIG_SLUB_DEBUG_ON)
@@ -2139,7 +2257,7 @@ index 7f4bc7027ed5..9c35bb1bccf0 100644
  
  /*
   * slub is about to manipulate internal object metadata.  This memory lies
-@@ -517,6 +586,9 @@ static struct track *get_track(struct kmem_cache *s, void *object,
+@@ -517,6 +590,9 @@ static struct track *get_track(struct kmem_cache *s, void *object,
  	else
  		p = object + s->inuse;
  
@@ -2149,7 +2267,7 @@ index 7f4bc7027ed5..9c35bb1bccf0 100644
  	return p + alloc;
  }
  
-@@ -655,6 +727,9 @@ static void print_trailer(struct kmem_cache *s, struct page *page, u8 *p)
+@@ -655,6 +731,9 @@ static void print_trailer(struct kmem_cache *s, struct page *page, u8 *p)
  	else
  		off = s->inuse;
  
@@ -2159,7 +2277,7 @@ index 7f4bc7027ed5..9c35bb1bccf0 100644
  	if (s->flags & SLAB_STORE_USER)
  		off += 2 * sizeof(struct track);
  
-@@ -784,6 +859,9 @@ static int check_pad_bytes(struct kmem_cache *s, struct page *page, u8 *p)
+@@ -784,6 +863,9 @@ static int check_pad_bytes(struct kmem_cache *s, struct page *page, u8 *p)
  		/* Freepointer is placed after the object. */
  		off += sizeof(void *);
  
@@ -2169,24 +2287,30 @@ index 7f4bc7027ed5..9c35bb1bccf0 100644
  	if (s->flags & SLAB_STORE_USER)
  		/* We also have user information there */
  		off += 2 * sizeof(struct track);
-@@ -1385,6 +1463,7 @@ static void setup_object(struct kmem_cache *s, struct page *page,
+@@ -1385,8 +1467,9 @@ static void setup_object(struct kmem_cache *s, struct page *page,
  				void *object)
  {
  	setup_object_debug(s, page, object);
 +	set_canary(s, object, s->random_inactive);
  	kasan_init_slab_obj(s, object);
- 	if (unlikely(s->ctor)) {
+-	if (unlikely(s->ctor)) {
++	if (unlikely(s->ctor) && !has_sanitize_verify(s)) {
  		kasan_unpoison_object_data(s, object);
-@@ -2712,9 +2791,19 @@ static __always_inline void *slab_alloc_node(struct kmem_cache *s,
+ 		s->ctor(object);
+ 		kasan_poison_object_data(s, object);
+@@ -2712,9 +2795,21 @@ static __always_inline void *slab_alloc_node(struct kmem_cache *s,
  		stat(s, ALLOC_FASTPATH);
  	}
  
-+	if (IS_ENABLED(CONFIG_SLAB_SANITIZE_VERIFY) && can_sanitize(s) && !s->ctor && object) {
+-	if (unlikely(gfpflags & __GFP_ZERO) && object)
++	if (has_sanitize_verify(s) && object) {
 +		size_t offset = s->offset ? 0 : sizeof(void *);
 +		BUG_ON(memchr_inv(object + offset, 0, s->object_size - offset));
-+	}
-+
- 	if (unlikely(gfpflags & __GFP_ZERO) && object)
++		if (s->ctor)
++			s->ctor(object);
++		if (unlikely(gfpflags & __GFP_ZERO) && offset)
++			memset(object, 0, sizeof(void *));
++	} else if (unlikely(gfpflags & __GFP_ZERO) && object)
  		memset(object, 0, s->object_size);
  
 +	if (object) {
@@ -2197,11 +2321,11 @@ index 7f4bc7027ed5..9c35bb1bccf0 100644
  	slab_post_alloc_hook(s, gfpflags, 1, &object);
  
  	return object;
-@@ -2921,6 +3010,29 @@ static __always_inline void do_slab_free(struct kmem_cache *s,
+@@ -2921,6 +3016,29 @@ static __always_inline void do_slab_free(struct kmem_cache *s,
  	void *tail_obj = tail ? : head;
  	struct kmem_cache_cpu *c;
  	unsigned long tid;
-+	bool sanitize = IS_ENABLED(CONFIG_SLAB_SANITIZE) && can_sanitize(s);
++	bool sanitize = has_sanitize(s);
 +
 +	if (IS_ENABLED(CONFIG_SLAB_CANARY) || sanitize) {
 +		__maybe_unused int offset = s->offset ? 0 : sizeof(void *);
@@ -2215,7 +2339,7 @@ index 7f4bc7027ed5..9c35bb1bccf0 100644
 +
 +			if (sanitize) {
 +				memset(x + offset, 0, s->object_size - offset);
-+				if (s->ctor)
++				if (!IS_ENABLED(CONFIG_SLAB_SANITIZE_VERIFY) && s->ctor)
 +					s->ctor(x);
 +			}
 +			if (x == tail_obj)
@@ -2227,7 +2351,7 @@ index 7f4bc7027ed5..9c35bb1bccf0 100644
  redo:
  	/*
  	 * Determine the currently cpus per cpu slab.
-@@ -3099,7 +3211,7 @@ int kmem_cache_alloc_bulk(struct kmem_cache *s, gfp_t flags, size_t size,
+@@ -3099,7 +3217,7 @@ int kmem_cache_alloc_bulk(struct kmem_cache *s, gfp_t flags, size_t size,
  			  void **p)
  {
  	struct kmem_cache_cpu *c;
@@ -2236,23 +2360,26 @@ index 7f4bc7027ed5..9c35bb1bccf0 100644
  
  	/* memcg and kmem_cache debug support */
  	s = slab_pre_alloc_hook(s, flags);
-@@ -3135,6 +3247,15 @@ int kmem_cache_alloc_bulk(struct kmem_cache *s, gfp_t flags, size_t size,
- 	c->tid = next_tid(c->tid);
+@@ -3136,13 +3254,29 @@ int kmem_cache_alloc_bulk(struct kmem_cache *s, gfp_t flags, size_t size,
  	local_irq_enable();
  
-+	if (IS_ENABLED(CONFIG_SLAB_SANITIZE_VERIFY) && can_sanitize(s) && !s->ctor) {
+ 	/* Clear memory outside IRQ disabled fastpath loop */
+-	if (unlikely(flags & __GFP_ZERO)) {
++	if (has_sanitize_verify(s)) {
 +		int j;
 +
 +		for (j = 0; j < i; j++) {
 +			size_t offset = s->offset ? 0 : sizeof(void *);
 +			BUG_ON(memchr_inv(p[j] + offset, 0, s->object_size - offset));
++			if (s->ctor)
++				s->ctor(p[j]);
++			if (unlikely(flags & __GFP_ZERO) && offset)
++				memset(p[j], 0, sizeof(void *));
 +		}
-+	}
-+
- 	/* Clear memory outside IRQ disabled fastpath loop */
- 	if (unlikely(flags & __GFP_ZERO)) {
++	} else if (unlikely(flags & __GFP_ZERO)) {
  		int j;
-@@ -3143,6 +3264,11 @@ int kmem_cache_alloc_bulk(struct kmem_cache *s, gfp_t flags, size_t size,
+ 
+ 		for (j = 0; j < i; j++)
  			memset(p[j], 0, s->object_size);
  	}
  
@@ -2264,7 +2391,7 @@ index 7f4bc7027ed5..9c35bb1bccf0 100644
  	/* memcg and kmem_cache debug support */
  	slab_post_alloc_hook(s, flags, size, p);
  	return i;
-@@ -3346,6 +3472,7 @@ static void early_kmem_cache_node_alloc(int node)
+@@ -3346,6 +3480,7 @@ static void early_kmem_cache_node_alloc(int node)
  	init_object(kmem_cache_node, n, SLUB_RED_ACTIVE);
  	init_tracking(kmem_cache_node, n);
  #endif
@@ -2272,7 +2399,7 @@ index 7f4bc7027ed5..9c35bb1bccf0 100644
  	kasan_kmalloc(kmem_cache_node, n, sizeof(struct kmem_cache_node),
  		      GFP_KERNEL);
  	init_kmem_cache_node(n);
-@@ -3469,6 +3596,9 @@ static int calculate_sizes(struct kmem_cache *s, int forced_order)
+@@ -3469,6 +3604,9 @@ static int calculate_sizes(struct kmem_cache *s, int forced_order)
  		size += sizeof(void *);
  	}
  
@@ -2282,7 +2409,7 @@ index 7f4bc7027ed5..9c35bb1bccf0 100644
  #ifdef CONFIG_SLUB_DEBUG
  	if (flags & SLAB_STORE_USER)
  		/*
-@@ -3535,6 +3665,13 @@ static int calculate_sizes(struct kmem_cache *s, int forced_order)
+@@ -3535,6 +3673,13 @@ static int calculate_sizes(struct kmem_cache *s, int forced_order)
  static int kmem_cache_open(struct kmem_cache *s, unsigned long flags)
  {
  	s->flags = kmem_cache_flags(s->size, flags, s->name, s->ctor);
@@ -2296,7 +2423,7 @@ index 7f4bc7027ed5..9c35bb1bccf0 100644
  	s->reserved = 0;
  
  	if (need_reserve_slab_rcu && (s->flags & SLAB_DESTROY_BY_RCU))
-@@ -3826,6 +3963,8 @@ const char *__check_heap_object(const void *ptr, unsigned long n,
+@@ -3826,6 +3971,8 @@ const char *__check_heap_object(const void *ptr, unsigned long n,
  		offset -= s->red_left_pad;
  	}
  
@@ -2305,7 +2432,7 @@ index 7f4bc7027ed5..9c35bb1bccf0 100644
  	/* Allow address range falling entirely within object size. */
  	if (offset <= object_size && n <= object_size - offset)
  		return NULL;
-@@ -3844,7 +3983,11 @@ static size_t __ksize(const void *object)
+@@ -3844,7 +3991,11 @@ static size_t __ksize(const void *object)
  	page = virt_to_head_page(object);
  
  	if (unlikely(!PageSlab(page))) {
@@ -2336,7 +2463,7 @@ index 5dabf444d724..b971c3a568f2 100644
  }
  
 diff --git a/security/Kconfig b/security/Kconfig
-index d900f47eaa68..34fb609b372d 100644
+index d900f47eaa68..77aa02d1ba9b 100644
 --- a/security/Kconfig
 +++ b/security/Kconfig
 @@ -8,7 +8,7 @@ source security/keys/Kconfig
@@ -2389,17 +2516,17 @@ index d900f47eaa68..34fb609b372d 100644
 +	  Detect overflows of buffers in common functions where the compiler
 +	  can determine the buffer size.
 +
-+config SANITIZE_PAGE
++config PAGE_SANITIZE
 +	bool "Sanitize pages"
 +	default y
 +	help
 +	  Zero fill page allocations on free, reducing the lifetime of
 +	  sensitive data and helping to mitigate use-after-free bugs.
 +
-+config SANITIZE_PAGE_VERIFY
++config PAGE_SANITIZE_VERIFY
 +	bool "Verify sanitized pages"
 +	default y
-+	depends on SANITIZE_PAGE
++	depends on PAGE_SANITIZE
 +	depends on !HIBERNATION
 +	help
 +	  Verify that newly allocated pages are zeroed to detect
