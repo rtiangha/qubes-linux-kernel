@@ -465,6 +465,21 @@ index a164862d77e3..e219042b59a7 100644
  #endif
  
  __must_check int memcpy_mcsafe_unrolled(void *dst, const void *src, size_t cnt);
+diff --git a/arch/x86/include/asm/suspend_64.h b/arch/x86/include/asm/suspend_64.h
+index 6136a18152af..2bd96b4df140 100644
+--- a/arch/x86/include/asm/suspend_64.h
++++ b/arch/x86/include/asm/suspend_64.h
+@@ -42,8 +42,7 @@ struct saved_context {
+ 	set_debugreg((thread)->debugreg##register, register)
+ 
+ /* routines for saving/restoring kernel state */
+-extern int acpi_save_state_mem(void);
+-extern char core_restore_code;
+-extern char restore_registers;
++extern char core_restore_code[];
++extern char restore_registers[];
+ 
+ #endif /* _ASM_X86_SUSPEND_64_H */
 diff --git a/arch/x86/include/asm/tlbflush.h b/arch/x86/include/asm/tlbflush.h
 index fc5abff9b7fd..2d0227eccd8e 100644
 --- a/arch/x86/include/asm/tlbflush.h
@@ -616,7 +631,7 @@ index 7940166c799b..7b3e4c5d760f 100644
  	if (gap < MIN_GAP)
  		gap = MIN_GAP;
 diff --git a/arch/x86/power/hibernate_64.c b/arch/x86/power/hibernate_64.c
-index ded2e8272382..86a7a08516ff 100644
+index ded2e8272382..a5da8276feec 100644
 --- a/arch/x86/power/hibernate_64.c
 +++ b/arch/x86/power/hibernate_64.c
 @@ -130,7 +130,7 @@ static int relocate_restore_code(void)
@@ -624,10 +639,21 @@ index ded2e8272382..86a7a08516ff 100644
  		return -ENOMEM;
  
 -	memcpy((void *)relocated_restore_code, &core_restore_code, PAGE_SIZE);
-+	__builtin_memcpy((void *)relocated_restore_code, &core_restore_code, PAGE_SIZE);
++	memcpy((void *)relocated_restore_code, core_restore_code, PAGE_SIZE);
  
  	/* Make the page containing the relocated code executable */
  	pgd = (pgd_t *)__va(read_cr3()) + pgd_index(relocated_restore_code);
+@@ -273,8 +273,8 @@ int arch_hibernation_header_save(void *addr, unsigned int max_size)
+ 
+ 	if (max_size < sizeof(struct restore_data_record))
+ 		return -EOVERFLOW;
+-	rdr->jump_address = (unsigned long)&restore_registers;
+-	rdr->jump_address_phys = __pa_symbol(&restore_registers);
++	rdr->jump_address = (unsigned long)restore_registers;
++	rdr->jump_address_phys = __pa_symbol(restore_registers);
+ 	rdr->cr3 = restore_cr3;
+ 	rdr->magic = RESTORE_MAGIC;
+ 
 diff --git a/drivers/ata/libata-core.c b/drivers/ata/libata-core.c
 index ca75823697dd..0ae0e9674fdf 100644
 --- a/drivers/ata/libata-core.c
@@ -701,28 +727,75 @@ index 829be21f97b2..28ea0af89aef 100644
  
  
 diff --git a/drivers/net/wireless/marvell/libertas/mesh.c b/drivers/net/wireless/marvell/libertas/mesh.c
-index d0c881dd5846..754075e7d0e9 100644
+index d0c881dd5846..6076c83ce5ab 100644
 --- a/drivers/net/wireless/marvell/libertas/mesh.c
 +++ b/drivers/net/wireless/marvell/libertas/mesh.c
-@@ -1177,7 +1177,7 @@ void lbs_mesh_ethtool_get_strings(struct net_device *dev,
+@@ -1108,15 +1108,15 @@ void lbs_mesh_set_txpd(struct lbs_private *priv,
+  * Ethtool related
+  */
+ 
+-static const char * const mesh_stat_strings[] = {
+-			"drop_duplicate_bcast",
+-			"drop_ttl_zero",
+-			"drop_no_fwd_route",
+-			"drop_no_buffers",
+-			"fwded_unicast_cnt",
+-			"fwded_bcast_cnt",
+-			"drop_blind_table",
+-			"tx_failed_cnt"
++static const char mesh_stat_strings[MESH_STATS_NUM][ETH_GSTRING_LEN] = {
++	"drop_duplicate_bcast",
++	"drop_ttl_zero",
++	"drop_no_fwd_route",
++	"drop_no_buffers",
++	"fwded_unicast_cnt",
++	"fwded_bcast_cnt",
++	"drop_blind_table",
++	"tx_failed_cnt"
+ };
+ 
+ void lbs_mesh_ethtool_get_stats(struct net_device *dev,
+@@ -1170,17 +1170,11 @@ int lbs_mesh_ethtool_get_sset_count(struct net_device *dev, int sset)
+ void lbs_mesh_ethtool_get_strings(struct net_device *dev,
+ 	uint32_t stringset, uint8_t *s)
+ {
+-	int i;
+-
+ 	lbs_deb_enter(LBS_DEB_ETHTOOL);
+ 
  	switch (stringset) {
  	case ETH_SS_STATS:
- 		for (i = 0; i < MESH_STATS_NUM; i++) {
+-		for (i = 0; i < MESH_STATS_NUM; i++) {
 -			memcpy(s + i * ETH_GSTRING_LEN,
-+			__builtin_memcpy(s + i * ETH_GSTRING_LEN,
- 					mesh_stat_strings[i],
- 					ETH_GSTRING_LEN);
- 		}
+-					mesh_stat_strings[i],
+-					ETH_GSTRING_LEN);
+-		}
++		memcpy(s, *mesh_stat_strings, sizeof(mesh_stat_strings));
+ 		break;
+ 	}
+ 	lbs_deb_enter(LBS_DEB_ETHTOOL);
 diff --git a/drivers/net/wireless/ray_cs.c b/drivers/net/wireless/ray_cs.c
-index b94479441b0c..270b8dce4d43 100644
+index b94479441b0c..170cd504e8ff 100644
 --- a/drivers/net/wireless/ray_cs.c
 +++ b/drivers/net/wireless/ray_cs.c
-@@ -597,7 +597,7 @@ static void init_startup_params(ray_dev_t *local)
+@@ -247,7 +247,10 @@ static const UCHAR b4_default_startup_parms[] = {
+ 	0x04, 0x08,		/* Noise gain, limit offset */
+ 	0x28, 0x28,		/* det rssi, med busy offsets */
+ 	7,			/* det sync thresh */
+-	0, 2, 2			/* test mode, min, max */
++	0, 2, 2,		/* test mode, min, max */
++	0,			/* rx/tx delay */
++	0, 0, 0, 0, 0, 0,	/* current BSS id */
++	0			/* hop set */
+ };
+ 
+ /*===========================================================================*/
+@@ -597,7 +600,7 @@ static void init_startup_params(ray_dev_t *local)
  	 *    a_beacon_period = hops    a_beacon_period = KuS
  	 *//* 64ms = 010000 */
  	if (local->fw_ver == 0x55) {
 -		memcpy((UCHAR *) &local->sparm.b4, b4_default_startup_parms,
-+		__builtin_memcpy((UCHAR *) &local->sparm.b4, b4_default_startup_parms,
++		memcpy(&local->sparm.b4, b4_default_startup_parms,
  		       sizeof(struct b4_startup_params));
  		/* Translate sane kus input values to old build 4/5 format */
  		/* i = hop time in uS truncated to 3 bytes */
@@ -2120,7 +2193,7 @@ index 09d0e849b07f..cbe5b3ad2cba 100644
  static int __init setup_slab_nomerge(char *str)
  {
 diff --git a/mm/slub.c b/mm/slub.c
-index 7f4bc7027ed5..fade6ece439c 100644
+index 7f4bc7027ed5..34335c2d0cb3 100644
 --- a/mm/slub.c
 +++ b/mm/slub.c
 @@ -34,6 +34,7 @@
@@ -2148,7 +2221,7 @@ index 7f4bc7027ed5..fade6ece439c 100644
  void *fixup_red_left(struct kmem_cache *s, void *p)
  {
  	if (kmem_cache_debug(s) && s->flags & SLAB_RED_ZONE)
-@@ -240,28 +251,90 @@ static inline void stat(const struct kmem_cache *s, enum stat_item si)
+@@ -240,30 +251,90 @@ static inline void stat(const struct kmem_cache *s, enum stat_item si)
  
  static inline void *get_freepointer(struct kmem_cache *s, void *object)
  {
@@ -2199,8 +2272,9 @@ index 7f4bc7027ed5..fade6ece439c 100644
 +#else
  	*(void **)(object + s->offset) = fp;
 +#endif
-+}
-+
+ }
+ 
++#ifdef CONFIG_SLAB_CANARY
 +static inline unsigned long *get_canary(struct kmem_cache *s, void *object)
 +{
 +	if (s->offset)
@@ -2224,22 +2298,21 @@ index 7f4bc7027ed5..fade6ece439c 100644
 +
 +static inline void set_canary(struct kmem_cache *s, void *object, unsigned long value)
 +{
-+	if (IS_ENABLED(CONFIG_SLAB_CANARY)) {
-+		unsigned long *canary = get_canary(s, object);
-+		*canary = get_canary_value(canary, value);
-+	}
++	unsigned long *canary = get_canary(s, object);
++	*canary = get_canary_value(canary, value);
 +}
 +
 +static inline void check_canary(struct kmem_cache *s, void *object, unsigned long value)
 +{
-+	if (IS_ENABLED(CONFIG_SLAB_CANARY)) {
-+		unsigned long *canary = get_canary(s, object);
-+		BUG_ON(*canary != get_canary_value(canary, value));
-+	}
- }
- 
++	unsigned long *canary = get_canary(s, object);
++	BUG_ON(*canary != get_canary_value(canary, value));
++}
++#endif
++
  /* Loop over all objects in a slab */
-@@ -451,13 +524,13 @@ static inline void *restore_red_left(struct kmem_cache *s, void *p)
+ #define for_each_object(__p, __s, __addr, __objects) \
+ 	for (__p = fixup_red_left(__s, __addr); \
+@@ -451,13 +522,13 @@ static inline void *restore_red_left(struct kmem_cache *s, void *p)
   * Debug settings:
   */
  #if defined(CONFIG_SLUB_DEBUG_ON)
@@ -2257,7 +2330,7 @@ index 7f4bc7027ed5..fade6ece439c 100644
  
  /*
   * slub is about to manipulate internal object metadata.  This memory lies
-@@ -517,6 +590,9 @@ static struct track *get_track(struct kmem_cache *s, void *object,
+@@ -517,6 +588,9 @@ static struct track *get_track(struct kmem_cache *s, void *object,
  	else
  		p = object + s->inuse;
  
@@ -2267,7 +2340,7 @@ index 7f4bc7027ed5..fade6ece439c 100644
  	return p + alloc;
  }
  
-@@ -655,6 +731,9 @@ static void print_trailer(struct kmem_cache *s, struct page *page, u8 *p)
+@@ -655,6 +729,9 @@ static void print_trailer(struct kmem_cache *s, struct page *page, u8 *p)
  	else
  		off = s->inuse;
  
@@ -2277,7 +2350,7 @@ index 7f4bc7027ed5..fade6ece439c 100644
  	if (s->flags & SLAB_STORE_USER)
  		off += 2 * sizeof(struct track);
  
-@@ -784,6 +863,9 @@ static int check_pad_bytes(struct kmem_cache *s, struct page *page, u8 *p)
+@@ -784,6 +861,9 @@ static int check_pad_bytes(struct kmem_cache *s, struct page *page, u8 *p)
  		/* Freepointer is placed after the object. */
  		off += sizeof(void *);
  
@@ -2287,18 +2360,20 @@ index 7f4bc7027ed5..fade6ece439c 100644
  	if (s->flags & SLAB_STORE_USER)
  		/* We also have user information there */
  		off += 2 * sizeof(struct track);
-@@ -1385,8 +1467,9 @@ static void setup_object(struct kmem_cache *s, struct page *page,
+@@ -1385,8 +1465,11 @@ static void setup_object(struct kmem_cache *s, struct page *page,
  				void *object)
  {
  	setup_object_debug(s, page, object);
++#ifdef CONFIG_SLAB_CANARY
 +	set_canary(s, object, s->random_inactive);
++#endif
  	kasan_init_slab_obj(s, object);
 -	if (unlikely(s->ctor)) {
 +	if (unlikely(s->ctor) && !has_sanitize_verify(s)) {
  		kasan_unpoison_object_data(s, object);
  		s->ctor(object);
  		kasan_poison_object_data(s, object);
-@@ -2712,9 +2795,21 @@ static __always_inline void *slab_alloc_node(struct kmem_cache *s,
+@@ -2712,9 +2795,23 @@ static __always_inline void *slab_alloc_node(struct kmem_cache *s,
  		stat(s, ALLOC_FASTPATH);
  	}
  
@@ -2313,15 +2388,17 @@ index 7f4bc7027ed5..fade6ece439c 100644
 +	} else if (unlikely(gfpflags & __GFP_ZERO) && object)
  		memset(object, 0, s->object_size);
  
++#ifdef CONFIG_SLAB_CANARY
 +	if (object) {
 +		check_canary(s, object, s->random_inactive);
 +		set_canary(s, object, s->random_active);
 +	}
++#endif
 +
  	slab_post_alloc_hook(s, gfpflags, 1, &object);
  
  	return object;
-@@ -2921,6 +3016,29 @@ static __always_inline void do_slab_free(struct kmem_cache *s,
+@@ -2921,6 +3018,29 @@ static __always_inline void do_slab_free(struct kmem_cache *s,
  	void *tail_obj = tail ? : head;
  	struct kmem_cache_cpu *c;
  	unsigned long tid;
@@ -2332,10 +2409,10 @@ index 7f4bc7027ed5..fade6ece439c 100644
 +		void *x = head;
 +
 +		while (1) {
-+			if (IS_ENABLED(CONFIG_SLAB_CANARY)) {
-+				check_canary(s, x, s->random_active);
-+				set_canary(s, x, s->random_inactive);
-+			}
++#ifdef CONFIG_SLAB_CANARY
++			check_canary(s, x, s->random_active);
++			set_canary(s, x, s->random_inactive);
++#endif
 +
 +			if (sanitize) {
 +				memset(x + offset, 0, s->object_size - offset);
@@ -2351,7 +2428,7 @@ index 7f4bc7027ed5..fade6ece439c 100644
  redo:
  	/*
  	 * Determine the currently cpus per cpu slab.
-@@ -3099,7 +3217,7 @@ int kmem_cache_alloc_bulk(struct kmem_cache *s, gfp_t flags, size_t size,
+@@ -3099,7 +3219,7 @@ int kmem_cache_alloc_bulk(struct kmem_cache *s, gfp_t flags, size_t size,
  			  void **p)
  {
  	struct kmem_cache_cpu *c;
@@ -2360,7 +2437,7 @@ index 7f4bc7027ed5..fade6ece439c 100644
  
  	/* memcg and kmem_cache debug support */
  	s = slab_pre_alloc_hook(s, flags);
-@@ -3136,13 +3254,29 @@ int kmem_cache_alloc_bulk(struct kmem_cache *s, gfp_t flags, size_t size,
+@@ -3136,13 +3256,31 @@ int kmem_cache_alloc_bulk(struct kmem_cache *s, gfp_t flags, size_t size,
  	local_irq_enable();
  
  	/* Clear memory outside IRQ disabled fastpath loop */
@@ -2383,23 +2460,27 @@ index 7f4bc7027ed5..fade6ece439c 100644
  			memset(p[j], 0, s->object_size);
  	}
  
++#ifdef CONFIG_SLAB_CANARY
 +	for (k = 0; k < i; k++) {
 +		check_canary(s, p[k], s->random_inactive);
 +		set_canary(s, p[k], s->random_active);
 +	}
++#endif
 +
  	/* memcg and kmem_cache debug support */
  	slab_post_alloc_hook(s, flags, size, p);
  	return i;
-@@ -3346,6 +3480,7 @@ static void early_kmem_cache_node_alloc(int node)
+@@ -3346,6 +3484,9 @@ static void early_kmem_cache_node_alloc(int node)
  	init_object(kmem_cache_node, n, SLUB_RED_ACTIVE);
  	init_tracking(kmem_cache_node, n);
  #endif
++#ifdef CONFIG_SLAB_CANARY
 +	set_canary(kmem_cache_node, n, kmem_cache_node->random_active);
++#endif
  	kasan_kmalloc(kmem_cache_node, n, sizeof(struct kmem_cache_node),
  		      GFP_KERNEL);
  	init_kmem_cache_node(n);
-@@ -3469,6 +3604,9 @@ static int calculate_sizes(struct kmem_cache *s, int forced_order)
+@@ -3469,6 +3610,9 @@ static int calculate_sizes(struct kmem_cache *s, int forced_order)
  		size += sizeof(void *);
  	}
  
@@ -2409,7 +2490,7 @@ index 7f4bc7027ed5..fade6ece439c 100644
  #ifdef CONFIG_SLUB_DEBUG
  	if (flags & SLAB_STORE_USER)
  		/*
-@@ -3535,6 +3673,13 @@ static int calculate_sizes(struct kmem_cache *s, int forced_order)
+@@ -3535,6 +3679,13 @@ static int calculate_sizes(struct kmem_cache *s, int forced_order)
  static int kmem_cache_open(struct kmem_cache *s, unsigned long flags)
  {
  	s->flags = kmem_cache_flags(s->size, flags, s->name, s->ctor);
@@ -2423,16 +2504,18 @@ index 7f4bc7027ed5..fade6ece439c 100644
  	s->reserved = 0;
  
  	if (need_reserve_slab_rcu && (s->flags & SLAB_DESTROY_BY_RCU))
-@@ -3826,6 +3971,8 @@ const char *__check_heap_object(const void *ptr, unsigned long n,
+@@ -3826,6 +3977,10 @@ const char *__check_heap_object(const void *ptr, unsigned long n,
  		offset -= s->red_left_pad;
  	}
  
++#ifdef CONFIG_SLAB_CANARY
 +	check_canary(s, (void *)ptr - offset, s->random_active);
++#endif
 +
  	/* Allow address range falling entirely within object size. */
  	if (offset <= object_size && n <= object_size - offset)
  		return NULL;
-@@ -3844,7 +3991,11 @@ static size_t __ksize(const void *object)
+@@ -3844,7 +3999,11 @@ static size_t __ksize(const void *object)
  	page = virt_to_head_page(object);
  
  	if (unlikely(!PageSlab(page))) {
