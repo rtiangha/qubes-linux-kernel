@@ -449,11 +449,74 @@ index 58505f01962f..04e408163a90 100644
  	current->stack_canary = canary;
  #ifdef CONFIG_X86_64
  	this_cpu_write(irq_stack_union.stack_canary, canary);
+diff --git a/arch/x86/include/asm/string_32.h b/arch/x86/include/asm/string_32.h
+index 3d3e8353ee5c..e9ee84873de5 100644
+--- a/arch/x86/include/asm/string_32.h
++++ b/arch/x86/include/asm/string_32.h
+@@ -142,7 +142,9 @@ static __always_inline void *__constant_memcpy(void *to, const void *from,
+ }
+ 
+ #define __HAVE_ARCH_MEMCPY
++extern void *memcpy(void *, const void *, size_t);
+ 
++#ifndef CONFIG_FORTIFY_SOURCE
+ #ifdef CONFIG_X86_USE_3DNOW
+ 
+ #include <asm/mmx.h>
+@@ -195,11 +197,15 @@ static inline void *__memcpy3d(void *to, const void *from, size_t len)
+ #endif
+ 
+ #endif
++#endif /* !CONFIG_FORTIFY_SOURCE */
+ 
+ #define __HAVE_ARCH_MEMMOVE
+ void *memmove(void *dest, const void *src, size_t n);
+ 
++extern int memcmp(const void *, const void *, size_t);
++#ifndef CONFIG_FORTIFY_SOURCE
+ #define memcmp __builtin_memcmp
++#endif
+ 
+ #define __HAVE_ARCH_MEMCHR
+ extern void *memchr(const void *cs, int c, size_t count);
+@@ -321,6 +327,8 @@ void *__constant_c_and_count_memset(void *s, unsigned long pattern,
+ 	 : __memset_generic((s), (c), (count)))
+ 
+ #define __HAVE_ARCH_MEMSET
++extern void *memset(void *, int, size_t);
++#ifndef CONFIG_FORTIFY_SOURCE
+ #if (__GNUC__ >= 4)
+ #define memset(s, c, count) __builtin_memset(s, c, count)
+ #else
+@@ -330,6 +338,7 @@ void *__constant_c_and_count_memset(void *s, unsigned long pattern,
+ 				 (count))				\
+ 	 : __memset((s), (c), (count)))
+ #endif
++#endif /* !CONFIG_FORTIFY_SOURCE */
+ 
+ /*
+  * find the first occurrence of byte 'c', or 1 past the area if none
 diff --git a/arch/x86/include/asm/string_64.h b/arch/x86/include/asm/string_64.h
-index a164862d77e3..e219042b59a7 100644
+index a164862d77e3..f942debb7120 100644
 --- a/arch/x86/include/asm/string_64.h
 +++ b/arch/x86/include/asm/string_64.h
-@@ -77,6 +77,11 @@ int strcmp(const char *cs, const char *ct);
+@@ -31,6 +31,7 @@ static __always_inline void *__inline_memcpy(void *to, const void *from, size_t
+ extern void *memcpy(void *to, const void *from, size_t len);
+ extern void *__memcpy(void *to, const void *from, size_t len);
+ 
++#ifndef CONFIG_FORTIFY_SOURCE
+ #ifndef CONFIG_KMEMCHECK
+ #if (__GNUC__ == 4 && __GNUC_MINOR__ < 3) || __GNUC__ < 4
+ #define memcpy(dst, src, len)					\
+@@ -51,6 +52,7 @@ extern void *__memcpy(void *to, const void *from, size_t len);
+  */
+ #define memcpy(dst, src, len) __inline_memcpy((dst), (src), (len))
+ #endif
++#endif /* !CONFIG_FORTIFY_SOURCE */
+ 
+ #define __HAVE_ARCH_MEMSET
+ void *memset(void *s, int c, size_t n);
+@@ -77,6 +79,11 @@ int strcmp(const char *cs, const char *ct);
  #define memcpy(dst, src, len) __memcpy(dst, src, len)
  #define memmove(dst, src, len) __memmove(dst, src, len)
  #define memset(s, c, n) __memset(s, c, n)
@@ -676,6 +739,19 @@ index ca75823697dd..0ae0e9674fdf 100644
  	WARN_ON_ONCE(!(qc->flags & ATA_QCFLAG_ACTIVE));
  	ap = qc->ap;
  	link = qc->dev->link;
+diff --git a/drivers/infiniband/sw/rxe/rxe_resp.c b/drivers/infiniband/sw/rxe/rxe_resp.c
+index c9dd385ce62e..d9df3d6b539e 100644
+--- a/drivers/infiniband/sw/rxe/rxe_resp.c
++++ b/drivers/infiniband/sw/rxe/rxe_resp.c
+@@ -994,7 +994,7 @@ static int send_atomic_ack(struct rxe_qp *qp, struct rxe_pkt_info *pkt,
+ 	free_rd_atomic_resource(qp, res);
+ 	rxe_advance_resp_resource(qp);
+ 
+-	memcpy(SKB_TO_PKT(skb), &ack_pkt, sizeof(skb->cb));
++	__builtin_memcpy(SKB_TO_PKT(skb), &ack_pkt, sizeof(skb->cb));
+ 
+ 	res->type = RXE_ATOMIC_MASK;
+ 	res->atomic.skb = skb;
 diff --git a/drivers/net/ethernet/brocade/bna/bfa_ioc.c b/drivers/net/ethernet/brocade/bna/bfa_ioc.c
 index 0f6811860ad5..a36e38676640 100644
 --- a/drivers/net/ethernet/brocade/bna/bfa_ioc.c
@@ -864,7 +940,7 @@ index e6d1a6510886..fe68d1424879 100644
  	return tty;
  }
 diff --git a/drivers/usb/core/hub.c b/drivers/usb/core/hub.c
-index 9dca59ef18b3..41c7c6a8c95a 100644
+index f77a4ebde7d5..13053ce36a6d 100644
 --- a/drivers/usb/core/hub.c
 +++ b/drivers/usb/core/hub.c
 @@ -38,6 +38,8 @@
@@ -876,7 +952,7 @@ index 9dca59ef18b3..41c7c6a8c95a 100644
  /* Protect struct usb_device->state and ->children members
   * Note: Both are also protected by ->dev.sem, except that ->state can
   * change to USB_STATE_NOTATTACHED even when the semaphore isn't held. */
-@@ -4771,6 +4773,12 @@ static void hub_port_connect(struct usb_hub *hub, int port1, u16 portstatus,
+@@ -4780,6 +4782,12 @@ static void hub_port_connect(struct usb_hub *hub, int port1, u16 portstatus,
  			goto done;
  		return;
  	}
@@ -999,10 +1075,10 @@ index 6ffb67e10c06..8b385769b88e 100644
  {
  	return true;
 diff --git a/include/linux/fs.h b/include/linux/fs.h
-index 7251f7bb45e8..811a1c587cb3 100644
+index 741563098d98..1c4f3d4c915d 100644
 --- a/include/linux/fs.h
 +++ b/include/linux/fs.h
-@@ -3217,4 +3217,15 @@ static inline bool dir_relax_shared(struct inode *inode)
+@@ -3219,4 +3219,15 @@ static inline bool dir_relax_shared(struct inode *inode)
  extern bool path_noexec(const struct path *path);
  extern void inode_nohighmem(struct inode *inode);
  
@@ -1605,7 +1681,7 @@ index ff01cba86f43..c75a126e71a2 100644
  	if (err)
  		return err;
 diff --git a/kernel/fork.c b/kernel/fork.c
-index 6c463c80e93d..8b19d212d277 100644
+index 4cc564ece2cf..1567ea6c21d6 100644
 --- a/kernel/fork.c
 +++ b/kernel/fork.c
 @@ -99,6 +99,11 @@
@@ -1620,12 +1696,10 @@ index 6c463c80e93d..8b19d212d277 100644
  
  /*
   * Minimum number of threads to boot the kernel
-@@ -536,7 +541,12 @@ static struct task_struct *dup_task_struct(struct task_struct *orig, int node)
- 	set_task_stack_end_magic(tsk);
+@@ -537,6 +542,11 @@ static struct task_struct *dup_task_struct(struct task_struct *orig, int node)
  
  #ifdef CONFIG_CC_STACKPROTECTOR
--	tsk->stack_canary = get_random_int();
-+	tsk->stack_canary = get_random_long();
+ 	tsk->stack_canary = get_random_long();
 +
 +#ifdef CONFIG_64BIT
 +	/* Sacrifice 8 bits of entropy to mitigate non-terminated C string overflows */
@@ -1645,7 +1719,7 @@ index 6c463c80e93d..8b19d212d277 100644
  	/*
  	 * Thread groups must share signals as well, and detached threads
  	 * can only be started up within the thread group.
-@@ -2284,6 +2298,12 @@ SYSCALL_DEFINE1(unshare, unsigned long, unshare_flags)
+@@ -2288,6 +2302,12 @@ SYSCALL_DEFINE1(unshare, unsigned long, unshare_flags)
  	if (unshare_flags & CLONE_NEWNS)
  		unshare_flags |= CLONE_FS;
  
@@ -2193,7 +2267,7 @@ index 09d0e849b07f..cbe5b3ad2cba 100644
  static int __init setup_slab_nomerge(char *str)
  {
 diff --git a/mm/slub.c b/mm/slub.c
-index 7f4bc7027ed5..34335c2d0cb3 100644
+index 7f4bc7027ed5..37c4daba0619 100644
 --- a/mm/slub.c
 +++ b/mm/slub.c
 @@ -34,6 +34,7 @@
@@ -2470,6 +2544,19 @@ index 7f4bc7027ed5..34335c2d0cb3 100644
  	/* memcg and kmem_cache debug support */
  	slab_post_alloc_hook(s, flags, size, p);
  	return i;
+@@ -3174,9 +3312,9 @@ EXPORT_SYMBOL(kmem_cache_alloc_bulk);
+  * and increases the number of allocations possible without having to
+  * take the list_lock.
+  */
+-static int slub_min_order;
+-static int slub_max_order = PAGE_ALLOC_COSTLY_ORDER;
+-static int slub_min_objects;
++static int slub_min_order __ro_after_init;
++static int slub_max_order __ro_after_init = PAGE_ALLOC_COSTLY_ORDER;
++static int slub_min_objects __ro_after_init;
+ 
+ /*
+  * Calculate the order of allocation given an slab object size.
 @@ -3346,6 +3484,9 @@ static void early_kmem_cache_node_alloc(int node)
  	init_object(kmem_cache_node, n, SLUB_RED_ACTIVE);
  	init_tracking(kmem_cache_node, n);
@@ -2527,6 +2614,15 @@ index 7f4bc7027ed5..34335c2d0cb3 100644
  		return PAGE_SIZE << compound_order(page);
  	}
  
+@@ -4709,7 +4868,7 @@ enum slab_stat_type {
+ #define SO_TOTAL	(1 << SL_TOTAL)
+ 
+ #ifdef CONFIG_MEMCG
+-static bool memcg_sysfs_enabled = IS_ENABLED(CONFIG_SLUB_MEMCG_SYSFS_ON);
++static bool memcg_sysfs_enabled __ro_after_init = IS_ENABLED(CONFIG_SLUB_MEMCG_SYSFS_ON);
+ 
+ static int __init setup_slub_memcg_sysfs(char *str)
+ {
 diff --git a/mm/swap.c b/mm/swap.c
 index 5dabf444d724..b971c3a568f2 100644
 --- a/mm/swap.c
