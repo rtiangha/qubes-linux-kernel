@@ -96,6 +96,18 @@ index cd211a14a88f..616eae29a214 100644
  	depends on HAVE_ARCH_MMAP_RND_COMPAT_BITS
  	help
  	  This value can be used to select the number of bits to use to
+diff --git a/arch/arm64/Kconfig.debug b/arch/arm64/Kconfig.debug
+index fca2f02cde68..8e8d02b64424 100644
+--- a/arch/arm64/Kconfig.debug
++++ b/arch/arm64/Kconfig.debug
+@@ -45,6 +45,7 @@ config ARM64_RANDOMIZE_TEXT_OFFSET
+ config DEBUG_WX
+ 	bool "Warn on W+X mappings at boot"
+ 	select ARM64_PTDUMP_CORE
++	default y
+ 	---help---
+ 	  Generate a warning if any W+X mappings are found at boot.
+ 
 diff --git a/arch/arm64/include/asm/elf.h b/arch/arm64/include/asm/elf.h
 index 5d1700425efe..eb14c195af61 100644
 --- a/arch/arm64/include/asm/elf.h
@@ -226,7 +238,7 @@ index 7b0d55756eb1..6ac019f8c7df 100644
  	if (gap < MIN_GAP)
  		gap = MIN_GAP;
 diff --git a/arch/x86/Kconfig b/arch/x86/Kconfig
-index cc98d5a294ee..84e5476357fd 100644
+index cc98d5a294ee..f75caf807cfc 100644
 --- a/arch/x86/Kconfig
 +++ b/arch/x86/Kconfig
 @@ -1118,8 +1118,7 @@ config VM86
@@ -266,6 +278,15 @@ index cc98d5a294ee..84e5476357fd 100644
  
  config RANDOMIZE_MEMORY_PHYSICAL_PADDING
  	hex "Physical memory mapping padding" if EXPERT
+@@ -2144,7 +2143,7 @@ config COMPAT_VDSO
+ choice
+ 	prompt "vsyscall table for legacy applications"
+ 	depends on X86_64
+-	default LEGACY_VSYSCALL_EMULATE
++	default LEGACY_VSYSCALL_NONE
+ 	help
+ 	  Legacy user code that does not know how to find the vDSO expects
+ 	  to be able to issue three syscalls by calling fixed addresses in
 @@ -2234,8 +2233,7 @@ config CMDLINE_OVERRIDE
  	  be set to 'N' under normal conditions.
  
@@ -276,6 +297,18 @@ index cc98d5a294ee..84e5476357fd 100644
  	---help---
  	  Linux can allow user programs to install a per-process x86
  	  Local Descriptor Table (LDT) using the modify_ldt(2) system
+diff --git a/arch/x86/Kconfig.debug b/arch/x86/Kconfig.debug
+index 63c1d13aaf9f..5b0d82e900a1 100644
+--- a/arch/x86/Kconfig.debug
++++ b/arch/x86/Kconfig.debug
+@@ -77,6 +77,7 @@ config EFI_PGT_DUMP
+ config DEBUG_WX
+ 	bool "Warn on W+X mappings at boot"
+ 	select X86_PTDUMP_CORE
++	default y
+ 	---help---
+ 	  Generate a warning if any W+X mappings are found at boot.
+ 
 diff --git a/arch/x86/boot/compressed/error.h b/arch/x86/boot/compressed/error.h
 index 2e59dac07f9e..d732e608e3af 100644
 --- a/arch/x86/boot/compressed/error.h
@@ -739,6 +772,18 @@ index ca75823697dd..0ae0e9674fdf 100644
  	WARN_ON_ONCE(!(qc->flags & ATA_QCFLAG_ACTIVE));
  	ap = qc->ap;
  	link = qc->dev->link;
+diff --git a/drivers/char/Kconfig b/drivers/char/Kconfig
+index 31adbebf812e..0819ac5e6797 100644
+--- a/drivers/char/Kconfig
++++ b/drivers/char/Kconfig
+@@ -574,7 +574,6 @@ config TELCLOCK
+ config DEVPORT
+ 	bool "/dev/port character device"
+ 	depends on ISA || PCI
+-	default y
+ 	help
+ 	  Say Y here if you want to support the /dev/port device. The /dev/port
+ 	  device is similar to /dev/mem, but for I/O ports.
 diff --git a/drivers/infiniband/sw/rxe/rxe_resp.c b/drivers/infiniband/sw/rxe/rxe_resp.c
 index c9dd385ce62e..d9df3d6b539e 100644
 --- a/drivers/infiniband/sw/rxe/rxe_resp.c
@@ -752,6 +797,136 @@ index c9dd385ce62e..d9df3d6b539e 100644
  
  	res->type = RXE_ATOMIC_MASK;
  	res->atomic.skb = skb;
+diff --git a/drivers/media/dvb-frontends/cx24116.c b/drivers/media/dvb-frontends/cx24116.c
+index e105532bfba8..e07d52bb9b62 100644
+--- a/drivers/media/dvb-frontends/cx24116.c
++++ b/drivers/media/dvb-frontends/cx24116.c
+@@ -1462,7 +1462,7 @@ static int cx24116_tune(struct dvb_frontend *fe, bool re_tune,
+ 	return cx24116_read_status(fe, status);
+ }
+ 
+-static int cx24116_get_algo(struct dvb_frontend *fe)
++static enum dvbfe_algo cx24116_get_algo(struct dvb_frontend *fe)
+ {
+ 	return DVBFE_ALGO_HW;
+ }
+diff --git a/drivers/media/dvb-frontends/cx24117.c b/drivers/media/dvb-frontends/cx24117.c
+index d37cb7762bd6..97e0feff0ede 100644
+--- a/drivers/media/dvb-frontends/cx24117.c
++++ b/drivers/media/dvb-frontends/cx24117.c
+@@ -1555,7 +1555,7 @@ static int cx24117_tune(struct dvb_frontend *fe, bool re_tune,
+ 	return cx24117_read_status(fe, status);
+ }
+ 
+-static int cx24117_get_algo(struct dvb_frontend *fe)
++static enum dvbfe_algo cx24117_get_algo(struct dvb_frontend *fe)
+ {
+ 	return DVBFE_ALGO_HW;
+ }
+diff --git a/drivers/media/dvb-frontends/cx24120.c b/drivers/media/dvb-frontends/cx24120.c
+index 7f11dcc94d85..01da670760ba 100644
+--- a/drivers/media/dvb-frontends/cx24120.c
++++ b/drivers/media/dvb-frontends/cx24120.c
+@@ -1491,7 +1491,7 @@ static int cx24120_tune(struct dvb_frontend *fe, bool re_tune,
+ 	return cx24120_read_status(fe, status);
+ }
+ 
+-static int cx24120_get_algo(struct dvb_frontend *fe)
++static enum dvbfe_algo cx24120_get_algo(struct dvb_frontend *fe)
+ {
+ 	return DVBFE_ALGO_HW;
+ }
+diff --git a/drivers/media/dvb-frontends/cx24123.c b/drivers/media/dvb-frontends/cx24123.c
+index 4ae3d922a8e8..1292c05b8143 100644
+--- a/drivers/media/dvb-frontends/cx24123.c
++++ b/drivers/media/dvb-frontends/cx24123.c
+@@ -1005,7 +1005,7 @@ static int cx24123_tune(struct dvb_frontend *fe,
+ 	return retval;
+ }
+ 
+-static int cx24123_get_algo(struct dvb_frontend *fe)
++static enum dvbfe_algo cx24123_get_algo(struct dvb_frontend *fe)
+ {
+ 	return DVBFE_ALGO_HW;
+ }
+diff --git a/drivers/media/dvb-frontends/cxd2820r_core.c b/drivers/media/dvb-frontends/cxd2820r_core.c
+index f6ebbb47b9b2..3e0d8cbd76da 100644
+--- a/drivers/media/dvb-frontends/cxd2820r_core.c
++++ b/drivers/media/dvb-frontends/cxd2820r_core.c
+@@ -403,7 +403,7 @@ static enum dvbfe_search cxd2820r_search(struct dvb_frontend *fe)
+ 	return DVBFE_ALGO_SEARCH_ERROR;
+ }
+ 
+-static int cxd2820r_get_frontend_algo(struct dvb_frontend *fe)
++static enum dvbfe_algo cxd2820r_get_frontend_algo(struct dvb_frontend *fe)
+ {
+ 	return DVBFE_ALGO_CUSTOM;
+ }
+diff --git a/drivers/media/dvb-frontends/mb86a20s.c b/drivers/media/dvb-frontends/mb86a20s.c
+index e8ac8c3e2ec0..e0f4ba8302d1 100644
+--- a/drivers/media/dvb-frontends/mb86a20s.c
++++ b/drivers/media/dvb-frontends/mb86a20s.c
+@@ -2055,7 +2055,7 @@ static void mb86a20s_release(struct dvb_frontend *fe)
+ 	kfree(state);
+ }
+ 
+-static int mb86a20s_get_frontend_algo(struct dvb_frontend *fe)
++static enum dvbfe_algo mb86a20s_get_frontend_algo(struct dvb_frontend *fe)
+ {
+         return DVBFE_ALGO_HW;
+ }
+diff --git a/drivers/media/dvb-frontends/s921.c b/drivers/media/dvb-frontends/s921.c
+index 274544a3ae0e..9ef9b9bc1bd2 100644
+--- a/drivers/media/dvb-frontends/s921.c
++++ b/drivers/media/dvb-frontends/s921.c
+@@ -464,7 +464,7 @@ static int s921_tune(struct dvb_frontend *fe,
+ 	return rc;
+ }
+ 
+-static int s921_get_algo(struct dvb_frontend *fe)
++static enum dvbfe_algo s921_get_algo(struct dvb_frontend *fe)
+ {
+ 	return DVBFE_ALGO_HW;
+ }
+diff --git a/drivers/media/pci/bt8xx/dst.c b/drivers/media/pci/bt8xx/dst.c
+index 7166d2279465..fa682f9fdc4b 100644
+--- a/drivers/media/pci/bt8xx/dst.c
++++ b/drivers/media/pci/bt8xx/dst.c
+@@ -1657,7 +1657,7 @@ static int dst_tune_frontend(struct dvb_frontend* fe,
+ 	return 0;
+ }
+ 
+-static int dst_get_tuning_algo(struct dvb_frontend *fe)
++static enum dvbfe_algo dst_get_tuning_algo(struct dvb_frontend *fe)
+ {
+ 	return dst_algo ? DVBFE_ALGO_HW : DVBFE_ALGO_SW;
+ }
+diff --git a/drivers/media/pci/pt1/va1j5jf8007s.c b/drivers/media/pci/pt1/va1j5jf8007s.c
+index f75f69556be7..d913a6050e8c 100644
+--- a/drivers/media/pci/pt1/va1j5jf8007s.c
++++ b/drivers/media/pci/pt1/va1j5jf8007s.c
+@@ -98,7 +98,7 @@ static int va1j5jf8007s_read_snr(struct dvb_frontend *fe, u16 *snr)
+ 	return 0;
+ }
+ 
+-static int va1j5jf8007s_get_frontend_algo(struct dvb_frontend *fe)
++static enum dvbfe_algo va1j5jf8007s_get_frontend_algo(struct dvb_frontend *fe)
+ {
+ 	return DVBFE_ALGO_HW;
+ }
+diff --git a/drivers/media/pci/pt1/va1j5jf8007t.c b/drivers/media/pci/pt1/va1j5jf8007t.c
+index 63fda79a75c0..4115c3ccd4a8 100644
+--- a/drivers/media/pci/pt1/va1j5jf8007t.c
++++ b/drivers/media/pci/pt1/va1j5jf8007t.c
+@@ -88,7 +88,7 @@ static int va1j5jf8007t_read_snr(struct dvb_frontend *fe, u16 *snr)
+ 	return 0;
+ }
+ 
+-static int va1j5jf8007t_get_frontend_algo(struct dvb_frontend *fe)
++static enum dvbfe_algo va1j5jf8007t_get_frontend_algo(struct dvb_frontend *fe)
+ {
+ 	return DVBFE_ALGO_HW;
+ }
 diff --git a/drivers/net/ethernet/brocade/bna/bfa_ioc.c b/drivers/net/ethernet/brocade/bna/bfa_ioc.c
 index 0f6811860ad5..a36e38676640 100644
 --- a/drivers/net/ethernet/brocade/bna/bfa_ioc.c
@@ -986,6 +1161,15 @@ index 65145a3df065..bc0033b7aa65 100644
  	return 0;
  err:
  	up_write(&mm->mmap_sem);
+diff --git a/fs/nfs/Kconfig b/fs/nfs/Kconfig
+index f31fd0dd92c6..dd48c45829ba 100644
+--- a/fs/nfs/Kconfig
++++ b/fs/nfs/Kconfig
+@@ -199,4 +199,3 @@ config NFS_DEBUG
+ 	bool
+ 	depends on NFS_FS && SUNRPC_DEBUG
+ 	select CRC32
+-	default y
 diff --git a/fs/pipe.c b/fs/pipe.c
 index 73b84baf58f8..ce1b5d5d280c 100644
 --- a/fs/pipe.c
@@ -999,6 +1183,18 @@ index 73b84baf58f8..ce1b5d5d280c 100644
  
  /* Maximum allocatable pages per user. Hard limit is unset by default, soft
   * matches default values.
+diff --git a/fs/proc/Kconfig b/fs/proc/Kconfig
+index 1ade1206bb89..60b0f76dec47 100644
+--- a/fs/proc/Kconfig
++++ b/fs/proc/Kconfig
+@@ -39,7 +39,6 @@ config PROC_KCORE
+ config PROC_VMCORE
+ 	bool "/proc/vmcore support"
+ 	depends on PROC_FS && CRASH_DUMP
+-	default y
+         help
+         Exports the dump image of crashed kernel in ELF format.
+ 
 diff --git a/fs/stat.c b/fs/stat.c
 index a257b872a53d..662cf4bc0346 100644
 --- a/fs/stat.c
@@ -1224,9 +1420,20 @@ index 000fdb211c7d..95a3e8daf034 100644
  {
  	return sysctl_perf_event_paranoid > -1;
 diff --git a/include/linux/slab.h b/include/linux/slab.h
-index 3c37a8c51921..35940cfd14e7 100644
+index 3c37a8c51921..04af9d709d37 100644
 --- a/include/linux/slab.h
 +++ b/include/linux/slab.h
+@@ -149,8 +149,8 @@ void memcg_destroy_kmem_caches(struct mem_cgroup *);
+ /*
+  * Common kmalloc functions provided by all allocators
+  */
+-void * __must_check __krealloc(const void *, size_t, gfp_t);
+-void * __must_check krealloc(const void *, size_t, gfp_t);
++void * __must_check __krealloc(const void *, size_t, gfp_t) __attribute__((alloc_size(2)));
++void * __must_check krealloc(const void *, size_t, gfp_t) __attribute((alloc_size(2)));
+ void kfree(const void *);
+ void kzfree(const void *);
+ size_t ksize(const void *);
 @@ -327,7 +327,7 @@ static __always_inline int kmalloc_index(size_t size)
  }
  #endif /* !CONFIG_SLOB */
@@ -1556,7 +1763,7 @@ index d68edffbf142..764d10707d87 100644
  extern void vfree(const void *addr);
  extern void vfree_atomic(const void *addr);
 diff --git a/init/Kconfig b/init/Kconfig
-index a92f27da4a27..bef3601fbeb6 100644
+index a92f27da4a27..d82996838a6a 100644
 --- a/init/Kconfig
 +++ b/init/Kconfig
 @@ -1783,7 +1783,7 @@ config VM_EVENT_COUNTERS
@@ -1576,16 +1783,16 @@ index a92f27da4a27..bef3601fbeb6 100644
  	help
  	  Randomizing heap placement makes heap exploits harder, but it
  	  also breaks ancient binaries (including anything libc5 based).
-@@ -1853,7 +1852,7 @@ config SLOB
+@@ -1853,14 +1852,57 @@ config SLOB
  endchoice
  
  config SLAB_FREELIST_RANDOM
 -	default n
-+	default y
  	depends on SLAB || SLUB
  	bool "SLAB freelist randomization"
++	default y
  	help
-@@ -1861,6 +1860,49 @@ config SLAB_FREELIST_RANDOM
+ 	  Randomizes the freelist order used on creating new pages. This
  	  security feature reduces the predictability of the kernel slab
  	  allocator against heap overflows.
  
@@ -1598,9 +1805,9 @@ index a92f27da4a27..bef3601fbeb6 100644
 +          allocator.
 +
 +config SLAB_CANARY
-+	default y
 +	depends on SLUB
 +	bool "SLAB canaries"
++	default y
 +	help
 +	  Place canaries at the end of kernel slab allocations, sacrificing
 +	  some performance and memory usage for security.
@@ -1614,9 +1821,9 @@ index a92f27da4a27..bef3601fbeb6 100644
 +	  byte and provide basic double-free detection.
 +
 +config SLAB_SANITIZE
-+	default y
-+	depends on SLUB
 +	bool "Sanitize SLAB allocations"
++	depends on SLUB
++	default y
 +	help
 +	  Zero fill slab allocations on free, reducing the lifetime of
 +	  sensitive data and helping to mitigate use-after-free bugs.
@@ -1624,9 +1831,9 @@ index a92f27da4a27..bef3601fbeb6 100644
 +	  For slabs with debug poisoning enabling, this has no impact.
 +
 +config SLAB_SANITIZE_VERIFY
-+	default y
 +	depends on SLAB_SANITIZE && PAGE_SANITIZE
 +	depends on !HIBERNATION
++	default y
 +	bool "Verify sanitized SLAB allocations"
 +	help
 +	  Verify that newly allocated slab allocations are zeroed to detect
@@ -1950,7 +2157,7 @@ index 2f735cbe05e8..555323178c3c 100644
  static DEFINE_MUTEX(userns_state_mutex);
  
 diff --git a/lib/Kconfig.debug b/lib/Kconfig.debug
-index fa16c0f82d6e..44a71964174e 100644
+index fa16c0f82d6e..aabcb35c0da0 100644
 --- a/lib/Kconfig.debug
 +++ b/lib/Kconfig.debug
 @@ -916,6 +916,7 @@ endmenu # "Debug lockups and hangs"
@@ -1978,6 +2185,14 @@ index fa16c0f82d6e..44a71964174e 100644
  	help
  	  Enable this to turn on extended checks in the linked-list
  	  walking routines.
+@@ -1994,6 +1996,7 @@ config TEST_STATIC_KEYS
+ config BUG_ON_DATA_CORRUPTION
+ 	bool "Trigger a BUG when data corruption is detected"
+ 	select DEBUG_LIST
++	default y
+ 	help
+ 	  Select this option if the kernel should BUG when it encounters
+ 	  data corruption in kernel memory structures when they get checked
 diff --git a/lib/nlattr.c b/lib/nlattr.c
 index b42b8577fc23..902d83cd766c 100644
 --- a/lib/nlattr.c
@@ -2018,6 +2233,20 @@ index e3bf4e0f10b5..f5a259a82261 100644
  
  /*
   * Show a '%p' thing.  A kernel extension is that the '%p' is followed
+diff --git a/mm/Kconfig b/mm/Kconfig
+index 9b8fccb969dc..dde813f1a01e 100644
+--- a/mm/Kconfig
++++ b/mm/Kconfig
+@@ -344,7 +344,8 @@ config KSM
+ config DEFAULT_MMAP_MIN_ADDR
+         int "Low address space to protect from user allocation"
+ 	depends on MMU
+-        default 4096
++	default 32768 if ARM || (ARM64 && COMPAT)
++	default 65536
+         help
+ 	  This is the portion of low virtual memory which should be protected
+ 	  from userspace allocation.  Keeping a user from writing to low pages
 diff --git a/mm/mmap.c b/mm/mmap.c
 index bfbe8856d134..3a76d54a6422 100644
 --- a/mm/mmap.c
@@ -2245,10 +2474,10 @@ index 65e7c3fcac72..15dd511f509d 100644
  	/*
  	 * Else we can use all the padding etc for the allocation
 diff --git a/mm/slab_common.c b/mm/slab_common.c
-index 09d0e849b07f..cbe5b3ad2cba 100644
+index 09d0e849b07f..46c4083e1014 100644
 --- a/mm/slab_common.c
 +++ b/mm/slab_common.c
-@@ -25,7 +25,7 @@
+@@ -25,10 +25,10 @@
  
  #include "slab.h"
  
@@ -2256,7 +2485,11 @@ index 09d0e849b07f..cbe5b3ad2cba 100644
 +enum slab_state slab_state __ro_after_init;
  LIST_HEAD(slab_caches);
  DEFINE_MUTEX(slab_mutex);
- struct kmem_cache *kmem_cache;
+-struct kmem_cache *kmem_cache;
++struct kmem_cache *kmem_cache __ro_after_init;
+ 
+ static LIST_HEAD(slab_caches_to_rcu_destroy);
+ static void slab_caches_to_rcu_destroy_workfn(struct work_struct *work);
 @@ -49,7 +49,7 @@ static DECLARE_WORK(slab_caches_to_rcu_destroy_work,
   * Merge control. If this is set then no merging of slab caches will occur.
   * (Could be removed. This was introduced to pacify the merge skeptics.)
@@ -2266,6 +2499,15 @@ index 09d0e849b07f..cbe5b3ad2cba 100644
  
  static int __init setup_slab_nomerge(char *str)
  {
+@@ -919,7 +919,7 @@ EXPORT_SYMBOL(kmalloc_dma_caches);
+  * of two cache sizes there. The size of larger slabs can be determined using
+  * fls.
+  */
+-static s8 size_index[24] = {
++static s8 size_index[24] __ro_after_init = {
+ 	3,	/* 8 */
+ 	4,	/* 16 */
+ 	5,	/* 24 */
 diff --git a/mm/slub.c b/mm/slub.c
 index 7f4bc7027ed5..37c4daba0619 100644
 --- a/mm/slub.c
@@ -2642,7 +2884,7 @@ index 5dabf444d724..b971c3a568f2 100644
  }
  
 diff --git a/security/Kconfig b/security/Kconfig
-index d900f47eaa68..77aa02d1ba9b 100644
+index d900f47eaa68..7ade47fcefdf 100644
 --- a/security/Kconfig
 +++ b/security/Kconfig
 @@ -8,7 +8,7 @@ source security/keys/Kconfig
@@ -2673,8 +2915,8 @@ index d900f47eaa68..77aa02d1ba9b 100644
 +
 +config SECURITY_PERF_EVENTS_RESTRICT
 +	bool "Restrict unprivileged use of performance events"
-+	default y
 +	depends on PERF_EVENTS
++	default y
 +	help
 +	  If you say Y here, the kernel.perf_event_paranoid sysctl
 +	  will be set to 3 by default, and no unprivileged use of the
@@ -2684,7 +2926,15 @@ index d900f47eaa68..77aa02d1ba9b 100644
  config SECURITY
  	bool "Enable different security models"
  	depends on SYSFS
-@@ -158,6 +181,29 @@ config HARDENED_USERCOPY_PAGESPAN
+@@ -138,6 +161,7 @@ config HARDENED_USERCOPY
+ 	depends on HAVE_ARCH_HARDENED_USERCOPY
+ 	depends on HAVE_HARDENED_USERCOPY_ALLOCATOR
+ 	select BUG
++	default y
+ 	help
+ 	  This option checks for obviously wrong memory regions when
+ 	  copying memory to/from the kernel (via copy_to_user() and
+@@ -158,6 +182,29 @@ config HARDENED_USERCOPY_PAGESPAN
  	  been removed. This config is intended to be used only while
  	  trying to find such users.
  
@@ -2704,9 +2954,9 @@ index d900f47eaa68..77aa02d1ba9b 100644
 +
 +config PAGE_SANITIZE_VERIFY
 +	bool "Verify sanitized pages"
-+	default y
 +	depends on PAGE_SANITIZE
 +	depends on !HIBERNATION
++	default y
 +	help
 +	  Verify that newly allocated pages are zeroed to detect
 +	  write-after-free bugs.
@@ -2714,3 +2964,16 @@ index d900f47eaa68..77aa02d1ba9b 100644
  config STATIC_USERMODEHELPER
  	bool "Force all usermode helper calls through a single binary"
  	help
+diff --git a/security/yama/Kconfig b/security/yama/Kconfig
+index 90c605eea892..ada8acd85517 100644
+--- a/security/yama/Kconfig
++++ b/security/yama/Kconfig
+@@ -1,7 +1,7 @@
+ config SECURITY_YAMA
+ 	bool "Yama support"
+ 	depends on SECURITY
+-	default n
++	default y
+ 	help
+ 	  This selects Yama, which extends DAC support with additional
+ 	  system-wide security settings beyond regular Linux discretionary
