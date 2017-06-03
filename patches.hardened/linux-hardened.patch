@@ -174,6 +174,20 @@ index 2eb714c4639f..d0aa42907569 100644
  #endif
  
  #endif
+diff --git a/arch/arm64/kernel/process.c b/arch/arm64/kernel/process.c
+index 043d373b8369..a5ff9373901b 100644
+--- a/arch/arm64/kernel/process.c
++++ b/arch/arm64/kernel/process.c
+@@ -410,7 +410,7 @@ unsigned long arch_align_stack(unsigned long sp)
+ unsigned long arch_randomize_brk(struct mm_struct *mm)
+ {
+ 	if (is_compat_task())
+-		return randomize_page(mm->brk, SZ_32M);
++		return mm->brk + get_random_long() % SZ_32M + PAGE_SIZE;
+ 	else
+-		return randomize_page(mm->brk, SZ_1G);
++		return mm->brk + get_random_long() % SZ_1G + PAGE_SIZE;
+ }
 diff --git a/arch/arm64/kernel/vdso.c b/arch/arm64/kernel/vdso.c
 index 41b6e31f8f55..ae35f1855e06 100644
 --- a/arch/arm64/kernel/vdso.c
@@ -665,7 +679,7 @@ index 50c89e8a95f2..e148d28a3d68 100644
  		.callback	= dmi_io_delay_0xed_port,
  		.ident		= "Compaq Presario V6000",
 diff --git a/arch/x86/kernel/process.c b/arch/x86/kernel/process.c
-index f67591561711..71d65bbe7b78 100644
+index f67591561711..a844ae70c21b 100644
 --- a/arch/x86/kernel/process.c
 +++ b/arch/x86/kernel/process.c
 @@ -37,6 +37,8 @@
@@ -683,9 +697,9 @@ index f67591561711..71d65bbe7b78 100644
  {
 -	return randomize_page(mm->brk, 0x02000000);
 +	if (mmap_is_ia32())
-+		return randomize_page(mm->brk, SZ_32M);
++		return mm->brk + get_random_long() % SZ_32M + PAGE_SIZE;
 +	else
-+		return randomize_page(mm->brk, SZ_1G);
++		return mm->brk + get_random_long() % SZ_1G + PAGE_SIZE;
  }
  
  /*
@@ -1815,7 +1829,7 @@ index 84a110a719cb..96312c3afc07 100644
  		.ident = "Sahara Touch-iT",
  		.matches = {
 diff --git a/fs/exec.c b/fs/exec.c
-index 65145a3df065..bc0033b7aa65 100644
+index 65145a3df065..7a44a665045c 100644
 --- a/fs/exec.c
 +++ b/fs/exec.c
 @@ -62,6 +62,7 @@
@@ -1831,10 +1845,25 @@ index 65145a3df065..bc0033b7aa65 100644
  	up_write(&mm->mmap_sem);
  	bprm->p = vma->vm_end - sizeof(void *);
 +	if (randomize_va_space)
-+		bprm->p ^= get_random_long() & ~PAGE_MASK;
++		bprm->p ^= get_random_int() & ~PAGE_MASK;
  	return 0;
  err:
  	up_write(&mm->mmap_sem);
+diff --git a/fs/namei.c b/fs/namei.c
+index 19dcf62133cc..2e203bd65d94 100644
+--- a/fs/namei.c
++++ b/fs/namei.c
+@@ -900,8 +900,8 @@ static inline void put_link(struct nameidata *nd)
+ 		path_put(&last->link);
+ }
+ 
+-int sysctl_protected_symlinks __read_mostly = 0;
+-int sysctl_protected_hardlinks __read_mostly = 0;
++int sysctl_protected_symlinks __read_mostly = 1;
++int sysctl_protected_hardlinks __read_mostly = 1;
+ 
+ /**
+  * may_follow_link - Check symlink following for unsafe situations
 diff --git a/fs/nfs/Kconfig b/fs/nfs/Kconfig
 index f31fd0dd92c6..dd48c45829ba 100644
 --- a/fs/nfs/Kconfig
@@ -2645,7 +2674,7 @@ index 799a8a452187..50dfcb039a41 100644
  static inline void kimage_file_post_load_cleanup(struct kimage *image) { }
  #endif /* CONFIG_KEXEC_FILE */
 diff --git a/kernel/sysctl.c b/kernel/sysctl.c
-index 8c8714fcb53c..e1c52497c7ef 100644
+index 8c8714fcb53c..36f69215c321 100644
 --- a/kernel/sysctl.c
 +++ b/kernel/sysctl.c
 @@ -67,6 +67,7 @@
@@ -2793,6 +2822,15 @@ index 8c8714fcb53c..e1c52497c7ef 100644
 +		.extra2		= &one,
 +	},
 +#endif
++	{
++		.procname	= "device_sidechannel_restrict",
++		.data		= &device_sidechannel_restrict,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= proc_dointvec_minmax_sysadmin,
++		.extra1		= &zero,
++		.extra2		= &one,
++	},
 +#ifdef CONFIG_USB
 +	{
 +		.procname	= "deny_new_usb",
@@ -2804,15 +2842,6 @@ index 8c8714fcb53c..e1c52497c7ef 100644
 +		.extra2		= &one,
 +	},
 +#endif
-+	{
-+		.procname	= "device_sidechannel_restrict",
-+		.data		= &device_sidechannel_restrict,
-+		.maxlen		= sizeof(int),
-+		.mode		= 0644,
-+		.proc_handler	= proc_dointvec_minmax_sysadmin,
-+		.extra1		= &zero,
-+		.extra2		= &one,
-+	},
  	{
  		.procname	= "ngroups_max",
  		.data		= &ngroups_max,
@@ -2922,7 +2951,7 @@ index 9b8fccb969dc..dde813f1a01e 100644
  	  This is the portion of low virtual memory which should be protected
  	  from userspace allocation.  Keeping a user from writing to low pages
 diff --git a/mm/mmap.c b/mm/mmap.c
-index bfbe8856d134..3a76d54a6422 100644
+index bfbe8856d134..c5675da291a0 100644
 --- a/mm/mmap.c
 +++ b/mm/mmap.c
 @@ -94,7 +94,7 @@ static void unmap_region(struct mm_struct *mm,
@@ -2934,6 +2963,20 @@ index bfbe8856d134..3a76d54a6422 100644
  	__P000, __P001, __P010, __P011, __P100, __P101, __P110, __P111,
  	__S000, __S001, __S010, __S011, __S100, __S101, __S110, __S111
  };
+@@ -218,6 +218,13 @@ SYSCALL_DEFINE1(brk, unsigned long, brk)
+ 
+ 	newbrk = PAGE_ALIGN(brk);
+ 	oldbrk = PAGE_ALIGN(mm->brk);
++	/* properly handle unaligned min_brk as an empty heap */
++	if (min_brk & ~PAGE_MASK) {
++		if (brk == min_brk)
++			newbrk -= PAGE_SIZE;
++		if (mm->brk == min_brk)
++			oldbrk -= PAGE_SIZE;
++	}
+ 	if (oldbrk == newbrk)
+ 		goto set_brk;
+ 
 diff --git a/mm/page_alloc.c b/mm/page_alloc.c
 index c5fee5a0316d..3d7b75876120 100644
 --- a/mm/page_alloc.c
@@ -3558,7 +3601,7 @@ index 5dabf444d724..b971c3a568f2 100644
  }
  
 diff --git a/security/Kconfig b/security/Kconfig
-index d900f47eaa68..7ade47fcefdf 100644
+index d900f47eaa68..f3ae0198bc8c 100644
 --- a/security/Kconfig
 +++ b/security/Kconfig
 @@ -8,7 +8,7 @@ source security/keys/Kconfig
@@ -3574,6 +3617,16 @@ index d900f47eaa68..7ade47fcefdf 100644
  
  	  If you are unsure how to answer this question, answer N.
  
++config SECURITY_PERF_EVENTS_RESTRICT
++	bool "Restrict unprivileged use of performance events"
++	depends on PERF_EVENTS
++	default y
++	help
++	  If you say Y here, the kernel.perf_event_paranoid sysctl
++	  will be set to 3 by default, and no unprivileged use of the
++	  perf_event_open syscall will be permitted unless it is
++	  changed.
++
 +config SECURITY_TIOCSTI_RESTRICT
 +	bool "Restrict unprivileged use of tiocsti command injection"
 +	default y
@@ -3586,16 +3639,6 @@ index d900f47eaa68..7ade47fcefdf 100644
 +	  unless the tiocsti_restrict sysctl is explicitly set to (1).
 +
 +	  If you are unsure how to answer this question, answer N.
-+
-+config SECURITY_PERF_EVENTS_RESTRICT
-+	bool "Restrict unprivileged use of performance events"
-+	depends on PERF_EVENTS
-+	default y
-+	help
-+	  If you say Y here, the kernel.perf_event_paranoid sysctl
-+	  will be set to 3 by default, and no unprivileged use of the
-+	  perf_event_open syscall will be permitted unless it is
-+	  changed.
 +
  config SECURITY
  	bool "Enable different security models"
