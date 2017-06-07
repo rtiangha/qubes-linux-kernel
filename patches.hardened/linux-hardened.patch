@@ -439,7 +439,7 @@ index 226ca70dc6bd..8a42db347a79 100644
  #endif
  
 diff --git a/arch/x86/include/asm/elf.h b/arch/x86/include/asm/elf.h
-index 3762536619f8..cf7fcb5eaf01 100644
+index 3762536619f8..516913360848 100644
 --- a/arch/x86/include/asm/elf.h
 +++ b/arch/x86/include/asm/elf.h
 @@ -250,7 +250,11 @@ extern int force_personality32;
@@ -455,26 +455,33 @@ index 3762536619f8..cf7fcb5eaf01 100644
  
  /* This yields a mask that user programs can use to figure out what
     instruction set this CPU supports.  This could be done in user space,
-@@ -295,7 +299,7 @@ do {									\
+@@ -293,9 +297,13 @@ do {									\
+ 	}								\
+ } while (0)
  
- #ifdef CONFIG_X86_32
+-#ifdef CONFIG_X86_32
++#ifdef CONFIG_COMPAT
++#define STACK_RND_MASK (test_thread_flag(TIF_ADDR32) ? (1UL << mmap_rnd_compat_bits) - 1 : (1UL << mmap_rnd_bits) - 1)
++#else
++#define STACK_RND_MASK ((1UL << mmap_rnd_bits) - 1)
++#endif
  
 -#define STACK_RND_MASK (0x7ff)
-+#define STACK_RND_MASK ((1UL << mmap_rnd_bits) - 1)
++#ifdef CONFIG_X86_32
  
  #define ARCH_DLINFO		ARCH_DLINFO_IA32
  
-@@ -303,8 +307,7 @@ do {									\
+@@ -303,9 +311,6 @@ do {									\
  
  #else /* CONFIG_X86_32 */
  
 -/* 1GB for 64bit, 8MB for 32bit */
 -#define STACK_RND_MASK (test_thread_flag(TIF_ADDR32) ? 0x7ff : 0x3fffff)
-+#define STACK_RND_MASK (test_thread_flag(TIF_ADDR32) ? (1UL << mmap_rnd_compat_bits) - 1 : (1UL << mmap_rnd_bits) - 1)
- 
+-
  #define ARCH_DLINFO							\
  do {									\
-@@ -371,5 +374,4 @@ struct va_alignment {
+ 	if (vdso64_enabled)						\
+@@ -371,5 +376,4 @@ struct va_alignment {
  } ____cacheline_aligned;
  
  extern struct va_alignment va_align;
@@ -2193,10 +2200,10 @@ index 07ef550c6627..e42aafcbe2f6 100644
  	/*
  	 * Defragmentation by allocating from a remote node.
 diff --git a/include/linux/string.h b/include/linux/string.h
-index 26b6f6a66f83..fe25ea5241d1 100644
+index 26b6f6a66f83..3b4db2c9a136 100644
 --- a/include/linux/string.h
 +++ b/include/linux/string.h
-@@ -169,4 +169,204 @@ static inline const char *kbasename(const char *path)
+@@ -169,4 +169,210 @@ static inline const char *kbasename(const char *path)
  	return tail ? tail + 1 : path;
  }
  
@@ -2208,11 +2215,17 @@ index 26b6f6a66f83..fe25ea5241d1 100644
 +void __read_overflow2(void) __compiletime_error("detected read beyond size of object passed as 2nd parameter");
 +void __write_overflow(void) __compiletime_error("detected write beyond size of object passed as 1st parameter");
 +
++#ifdef CONFIG_FORTIFY_SOURCE_STRICT_STRING
++#define __string_size(p) __builtin_object_size(p, 1)
++#else
++#define __string_size(p) __builtin_object_size(p, 0)
++#endif
++
 +#if !defined(__NO_FORTIFY) && defined(__OPTIMIZE__) && defined(CONFIG_FORTIFY_SOURCE)
 +__FORTIFY_INLINE char *strcpy(char *p, const char *q)
 +{
-+	size_t p_size = __builtin_object_size(p, 0);
-+	size_t q_size = __builtin_object_size(q, 0);
++	size_t p_size = __string_size(p);
++	size_t q_size = __string_size(q);
 +	if (p_size == (size_t)-1 && q_size == (size_t)-1)
 +		return __builtin_strcpy(p, q);
 +	if (strscpy(p, q, p_size < q_size ? p_size : q_size) < 0)
@@ -2222,7 +2235,7 @@ index 26b6f6a66f83..fe25ea5241d1 100644
 +
 +__FORTIFY_INLINE char *strncpy(char *p, const char *q, __kernel_size_t size)
 +{
-+	size_t p_size = __builtin_object_size(p, 0);
++	size_t p_size = __string_size(p);
 +	if (__builtin_constant_p(size) && p_size < size)
 +		__write_overflow();
 +	if (p_size < size)
@@ -2232,7 +2245,7 @@ index 26b6f6a66f83..fe25ea5241d1 100644
 +
 +__FORTIFY_INLINE char *strcat(char *p, const char *q)
 +{
-+	size_t p_size = __builtin_object_size(p, 0);
++	size_t p_size = __string_size(p);
 +	if (p_size == (size_t)-1)
 +		return __builtin_strcat(p, q);
 +	if (strlcat(p, q, p_size) >= p_size)
@@ -2243,7 +2256,7 @@ index 26b6f6a66f83..fe25ea5241d1 100644
 +__FORTIFY_INLINE __kernel_size_t strlen(const char *p)
 +{
 +	__kernel_size_t ret;
-+	size_t p_size = __builtin_object_size(p, 0);
++	size_t p_size = __string_size(p);
 +	if (p_size == (size_t)-1)
 +		return __builtin_strlen(p);
 +	ret = strnlen(p, p_size);
@@ -2255,7 +2268,7 @@ index 26b6f6a66f83..fe25ea5241d1 100644
 +extern __kernel_size_t __real_strnlen(const char *, __kernel_size_t) __RENAME(strnlen);
 +__FORTIFY_INLINE __kernel_size_t strnlen(const char *p, __kernel_size_t maxlen)
 +{
-+	size_t p_size = __builtin_object_size(p, 0);
++	size_t p_size = __string_size(p);
 +	__kernel_size_t ret = __real_strnlen(p, maxlen < p_size ? maxlen : p_size);
 +	if (p_size <= ret)
 +		fortify_panic(__func__);
@@ -2267,8 +2280,8 @@ index 26b6f6a66f83..fe25ea5241d1 100644
 +__FORTIFY_INLINE size_t strlcpy(char *p, const char *q, size_t size)
 +{
 +	size_t ret;
-+	size_t p_size = __builtin_object_size(p, 0);
-+	size_t q_size = __builtin_object_size(q, 0);
++	size_t p_size = __string_size(p);
++	size_t q_size = __string_size(q);
 +	if (p_size == (size_t)-1 && q_size == (size_t)-1)
 +		return __real_strlcpy(p, q, size);
 +	ret = strlen(q);
@@ -2288,8 +2301,8 @@ index 26b6f6a66f83..fe25ea5241d1 100644
 +__FORTIFY_INLINE char *strncat(char *p, const char *q, __kernel_size_t count)
 +{
 +	size_t p_len, copy_len;
-+	size_t p_size = __builtin_object_size(p, 0);
-+	size_t q_size = __builtin_object_size(q, 0);
++	size_t p_size = __string_size(p);
++	size_t q_size = __string_size(q);
 +	if (p_size == (size_t)-1 && q_size == (size_t)-1)
 +		return __builtin_strncat(p, q, count);
 +	p_len = strlen(p);
@@ -2673,7 +2686,7 @@ index 799a8a452187..50dfcb039a41 100644
  static inline void kimage_file_post_load_cleanup(struct kimage *image) { }
  #endif /* CONFIG_KEXEC_FILE */
 diff --git a/kernel/sysctl.c b/kernel/sysctl.c
-index 8c8714fcb53c..36f69215c321 100644
+index 8c8714fcb53c..6f221a5a2d22 100644
 --- a/kernel/sysctl.c
 +++ b/kernel/sysctl.c
 @@ -67,6 +67,7 @@
@@ -2756,7 +2769,7 @@ index 8c8714fcb53c..36f69215c321 100644
 +static unsigned long hung_task_timeout_max __read_only = (LONG_MAX/HZ);
  #endif
  
-+int device_sidechannel_restrict = 1;
++int device_sidechannel_restrict __read_mostly = 1;
 +EXPORT_SYMBOL(device_sidechannel_restrict);
 +
  #ifdef CONFIG_INOTIFY_USER
@@ -3600,7 +3613,7 @@ index 5dabf444d724..b971c3a568f2 100644
  }
  
 diff --git a/security/Kconfig b/security/Kconfig
-index d900f47eaa68..f3ae0198bc8c 100644
+index d900f47eaa68..6de38c37f74e 100644
 --- a/security/Kconfig
 +++ b/security/Kconfig
 @@ -8,7 +8,7 @@ source security/keys/Kconfig
@@ -3650,7 +3663,7 @@ index d900f47eaa68..f3ae0198bc8c 100644
  	help
  	  This option checks for obviously wrong memory regions when
  	  copying memory to/from the kernel (via copy_to_user() and
-@@ -158,6 +182,29 @@ config HARDENED_USERCOPY_PAGESPAN
+@@ -158,6 +182,37 @@ config HARDENED_USERCOPY_PAGESPAN
  	  been removed. This config is intended to be used only while
  	  trying to find such users.
  
@@ -3660,6 +3673,14 @@ index d900f47eaa68..f3ae0198bc8c 100644
 +	help
 +	  Detect overflows of buffers in common functions where the compiler
 +	  can determine the buffer size.
++
++config FORTIFY_SOURCE_STRICT_STRING
++	bool "Harden common functions against buffer overflows"
++	depends on FORTIFY_SOURCE
++	depends on EXPERT
++	help
++	  Perform stricter overflow checks catching overflows within objects
++	  for common C string functions rather than only between objects.
 +
 +config PAGE_SANITIZE
 +	bool "Sanitize pages"
