@@ -2685,6 +2685,28 @@ index 799a8a452187..50dfcb039a41 100644
  #else /* CONFIG_KEXEC_FILE */
  static inline void kimage_file_post_load_cleanup(struct kimage *image) { }
  #endif /* CONFIG_KEXEC_FILE */
+diff --git a/kernel/power/snapshot.c b/kernel/power/snapshot.c
+index d79a38de425a..974e96e61078 100644
+--- a/kernel/power/snapshot.c
++++ b/kernel/power/snapshot.c
+@@ -1135,7 +1135,7 @@ void free_basic_memory_bitmaps(void)
+ 
+ void clear_free_pages(void)
+ {
+-#ifdef CONFIG_PAGE_POISONING_ZERO
++#if defined(CONFIG_PAGE_POISONING_ZERO) || defined(CONFIG_PAGE_SANITIZE)
+ 	struct memory_bitmap *bm = free_pages_map;
+ 	unsigned long pfn;
+ 
+@@ -1152,7 +1152,7 @@ void clear_free_pages(void)
+ 	}
+ 	memory_bm_position_reset(bm);
+ 	pr_info("PM: free pages cleared after restore\n");
+-#endif /* PAGE_POISONING_ZERO */
++#endif /* PAGE_POISONING_ZERO || PAGE_SANITIZE */
+ }
+ 
+ /**
 diff --git a/kernel/sysctl.c b/kernel/sysctl.c
 index 8c8714fcb53c..6f221a5a2d22 100644
 --- a/kernel/sysctl.c
@@ -2990,7 +3012,7 @@ index bfbe8856d134..c5675da291a0 100644
  		goto set_brk;
  
 diff --git a/mm/page_alloc.c b/mm/page_alloc.c
-index c5fee5a0316d..3d7b75876120 100644
+index a2019fc9d94d..54767969a640 100644
 --- a/mm/page_alloc.c
 +++ b/mm/page_alloc.c
 @@ -65,6 +65,7 @@
@@ -3017,7 +3039,7 @@ index c5fee5a0316d..3d7b75876120 100644
  #ifdef CONFIG_GCC_PLUGIN_LATENT_ENTROPY
  volatile unsigned long latent_entropy __latent_entropy;
  EXPORT_SYMBOL(latent_entropy);
-@@ -1044,6 +1054,13 @@ static __always_inline bool free_pages_prepare(struct page *page,
+@@ -1055,6 +1065,13 @@ static __always_inline bool free_pages_prepare(struct page *page,
  		debug_check_no_obj_freed(page_address(page),
  					   PAGE_SIZE << order);
  	}
@@ -3031,7 +3053,7 @@ index c5fee5a0316d..3d7b75876120 100644
  	arch_free_page(page, order);
  	kernel_poison_pages(page, 1 << order, 0);
  	kernel_map_pages(page, 1 << order, 0);
-@@ -1268,6 +1285,21 @@ static void __init __free_pages_boot_core(struct page *page, unsigned int order)
+@@ -1279,6 +1296,21 @@ static void __init __free_pages_boot_core(struct page *page, unsigned int order)
  	__ClearPageReserved(p);
  	set_page_count(p, 0);
  
@@ -3053,7 +3075,7 @@ index c5fee5a0316d..3d7b75876120 100644
  	page_zone(page)->managed_pages += nr_pages;
  	set_page_refcounted(page);
  	__free_pages(page, order);
-@@ -1700,8 +1732,8 @@ static inline int check_new_page(struct page *page)
+@@ -1711,8 +1743,8 @@ static inline int check_new_page(struct page *page)
  
  static inline bool free_pages_prezeroed(bool poisoned)
  {
@@ -3064,7 +3086,7 @@ index c5fee5a0316d..3d7b75876120 100644
  }
  
  #ifdef CONFIG_DEBUG_VM
-@@ -1765,6 +1797,12 @@ static void prep_new_page(struct page *page, unsigned int order, gfp_t gfp_flags
+@@ -1776,6 +1808,12 @@ static void prep_new_page(struct page *page, unsigned int order, gfp_t gfp_flags
  
  	post_alloc_hook(page, order, gfp_flags);
  
@@ -3238,7 +3260,7 @@ index 09d0e849b07f..46c4083e1014 100644
  	4,	/* 16 */
  	5,	/* 24 */
 diff --git a/mm/slub.c b/mm/slub.c
-index 7f4bc7027ed5..37c4daba0619 100644
+index e3863a22e10d..0b03cbfa3e3f 100644
 --- a/mm/slub.c
 +++ b/mm/slub.c
 @@ -34,6 +34,7 @@
@@ -3613,7 +3635,7 @@ index 5dabf444d724..b971c3a568f2 100644
  }
  
 diff --git a/security/Kconfig b/security/Kconfig
-index d900f47eaa68..6de38c37f74e 100644
+index d900f47eaa68..44b02964f56c 100644
 --- a/security/Kconfig
 +++ b/security/Kconfig
 @@ -8,7 +8,7 @@ source security/keys/Kconfig
@@ -3663,7 +3685,7 @@ index d900f47eaa68..6de38c37f74e 100644
  	help
  	  This option checks for obviously wrong memory regions when
  	  copying memory to/from the kernel (via copy_to_user() and
-@@ -158,6 +182,37 @@ config HARDENED_USERCOPY_PAGESPAN
+@@ -158,6 +182,36 @@ config HARDENED_USERCOPY_PAGESPAN
  	  been removed. This config is intended to be used only while
  	  trying to find such users.
  
@@ -3692,7 +3714,6 @@ index d900f47eaa68..6de38c37f74e 100644
 +config PAGE_SANITIZE_VERIFY
 +	bool "Verify sanitized pages"
 +	depends on PAGE_SANITIZE
-+	depends on !HIBERNATION
 +	default y
 +	help
 +	  Verify that newly allocated pages are zeroed to detect
