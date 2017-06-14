@@ -1906,7 +1906,7 @@ index 1ade1206bb89..60b0f76dec47 100644
          Exports the dump image of crashed kernel in ELF format.
  
 diff --git a/fs/stat.c b/fs/stat.c
-index a257b872a53d..cee5a0680caa 100644
+index ea6235a31ec8..c2f1b8d4a029 100644
 --- a/fs/stat.c
 +++ b/fs/stat.c
 @@ -38,8 +38,13 @@ void generic_fillattr(struct inode *inode, struct kstat *stat)
@@ -2023,6 +2023,25 @@ index b43d3f5bd9ea..f256cce1d9f2 100644
  	if (S_ISDIR(inode->i_mode))
  		mask |= FS_ISDIR;
  
+diff --git a/include/linux/genalloc.h b/include/linux/genalloc.h
+index 29d4385903d4..fe37be623053 100644
+--- a/include/linux/genalloc.h
++++ b/include/linux/genalloc.h
+@@ -113,11 +113,11 @@ static inline int gen_pool_add(struct gen_pool *pool, unsigned long addr,
+ 	return gen_pool_add_virt(pool, addr, -1, size, nid);
+ }
+ extern void gen_pool_destroy(struct gen_pool *);
+-extern unsigned long gen_pool_alloc(struct gen_pool *, size_t);
++extern unsigned long gen_pool_alloc(struct gen_pool *, size_t) __attribute__((alloc_size(2)));
+ extern unsigned long gen_pool_alloc_algo(struct gen_pool *, size_t,
+-		genpool_algo_t algo, void *data);
++		genpool_algo_t algo, void *data) __attribute__((alloc_size(2)));
+ extern void *gen_pool_dma_alloc(struct gen_pool *pool, size_t size,
+-		dma_addr_t *dma);
++		dma_addr_t *dma) __attribute__((alloc_size(2)));
+ extern void gen_pool_free(struct gen_pool *, unsigned long, size_t);
+ extern void gen_pool_for_each_chunk(struct gen_pool *,
+ 	void (*)(struct gen_pool *, struct gen_pool_chunk *, void *), void *);
 diff --git a/include/linux/gfp.h b/include/linux/gfp.h
 index db373b9d3223..8e67d5c3df10 100644
 --- a/include/linux/gfp.h
@@ -2575,7 +2594,7 @@ index f97fe77ceb88..916c159f2f08 100644
  
  /**
 diff --git a/kernel/events/core.c b/kernel/events/core.c
-index ff01cba86f43..c75a126e71a2 100644
+index 95c7fa675009..a3318fe63ace 100644
 --- a/kernel/events/core.c
 +++ b/kernel/events/core.c
 @@ -393,8 +393,13 @@ static struct srcu_struct pmus_srcu;
@@ -2592,7 +2611,7 @@ index ff01cba86f43..c75a126e71a2 100644
  
  /* Minimum for 512 kiB + 1 user control page */
  int sysctl_perf_event_mlock __read_mostly = 512 + (PAGE_SIZE / 1024); /* 'free' kiB per user */
-@@ -9682,6 +9687,9 @@ SYSCALL_DEFINE5(perf_event_open,
+@@ -9703,6 +9708,9 @@ SYSCALL_DEFINE5(perf_event_open,
  	if (flags & ~PERF_FLAG_ALL)
  		return -EINVAL;
  
@@ -2603,7 +2622,7 @@ index ff01cba86f43..c75a126e71a2 100644
  	if (err)
  		return err;
 diff --git a/kernel/fork.c b/kernel/fork.c
-index 4cc564ece2cf..1567ea6c21d6 100644
+index 4f7151d1716b..de1cc3dcbcc4 100644
 --- a/kernel/fork.c
 +++ b/kernel/fork.c
 @@ -99,6 +99,11 @@
@@ -2641,7 +2660,7 @@ index 4cc564ece2cf..1567ea6c21d6 100644
  	/*
  	 * Thread groups must share signals as well, and detached threads
  	 * can only be started up within the thread group.
-@@ -2288,6 +2302,12 @@ SYSCALL_DEFINE1(unshare, unsigned long, unshare_flags)
+@@ -2295,6 +2309,12 @@ SYSCALL_DEFINE1(unshare, unsigned long, unshare_flags)
  	if (unshare_flags & CLONE_NEWNS)
  		unshare_flags |= CLONE_FS;
  
