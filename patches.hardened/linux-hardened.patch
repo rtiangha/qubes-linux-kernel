@@ -3279,7 +3279,7 @@ index 09d0e849b07f..46c4083e1014 100644
  	4,	/* 16 */
  	5,	/* 24 */
 diff --git a/mm/slub.c b/mm/slub.c
-index e3863a22e10d..0b03cbfa3e3f 100644
+index e3863a22e10d..66f9c4ae4ee7 100644
 --- a/mm/slub.c
 +++ b/mm/slub.c
 @@ -34,6 +34,7 @@
@@ -3307,7 +3307,7 @@ index e3863a22e10d..0b03cbfa3e3f 100644
  void *fixup_red_left(struct kmem_cache *s, void *p)
  {
  	if (kmem_cache_debug(s) && s->flags & SLAB_RED_ZONE)
-@@ -240,30 +251,90 @@ static inline void stat(const struct kmem_cache *s, enum stat_item si)
+@@ -240,30 +251,93 @@ static inline void stat(const struct kmem_cache *s, enum stat_item si)
  
  static inline void *get_freepointer(struct kmem_cache *s, void *object)
  {
@@ -3393,12 +3393,15 @@ index e3863a22e10d..0b03cbfa3e3f 100644
 +	unsigned long *canary = get_canary(s, object);
 +	BUG_ON(*canary != get_canary_value(canary, value));
 +}
++#else
++	#define set_canary(s, object, value)
++	#define check_canary(s, object, value)
 +#endif
 +
  /* Loop over all objects in a slab */
  #define for_each_object(__p, __s, __addr, __objects) \
  	for (__p = fixup_red_left(__s, __addr); \
-@@ -451,13 +522,13 @@ static inline void *restore_red_left(struct kmem_cache *s, void *p)
+@@ -451,13 +525,13 @@ static inline void *restore_red_left(struct kmem_cache *s, void *p)
   * Debug settings:
   */
  #if defined(CONFIG_SLUB_DEBUG_ON)
@@ -3416,7 +3419,7 @@ index e3863a22e10d..0b03cbfa3e3f 100644
  
  /*
   * slub is about to manipulate internal object metadata.  This memory lies
-@@ -517,6 +588,9 @@ static struct track *get_track(struct kmem_cache *s, void *object,
+@@ -517,6 +591,9 @@ static struct track *get_track(struct kmem_cache *s, void *object,
  	else
  		p = object + s->inuse;
  
@@ -3426,7 +3429,7 @@ index e3863a22e10d..0b03cbfa3e3f 100644
  	return p + alloc;
  }
  
-@@ -655,6 +729,9 @@ static void print_trailer(struct kmem_cache *s, struct page *page, u8 *p)
+@@ -655,6 +732,9 @@ static void print_trailer(struct kmem_cache *s, struct page *page, u8 *p)
  	else
  		off = s->inuse;
  
@@ -3436,7 +3439,7 @@ index e3863a22e10d..0b03cbfa3e3f 100644
  	if (s->flags & SLAB_STORE_USER)
  		off += 2 * sizeof(struct track);
  
-@@ -784,6 +861,9 @@ static int check_pad_bytes(struct kmem_cache *s, struct page *page, u8 *p)
+@@ -784,6 +864,9 @@ static int check_pad_bytes(struct kmem_cache *s, struct page *page, u8 *p)
  		/* Freepointer is placed after the object. */
  		off += sizeof(void *);
  
@@ -3446,7 +3449,7 @@ index e3863a22e10d..0b03cbfa3e3f 100644
  	if (s->flags & SLAB_STORE_USER)
  		/* We also have user information there */
  		off += 2 * sizeof(struct track);
-@@ -1385,8 +1465,11 @@ static void setup_object(struct kmem_cache *s, struct page *page,
+@@ -1385,8 +1468,11 @@ static void setup_object(struct kmem_cache *s, struct page *page,
  				void *object)
  {
  	setup_object_debug(s, page, object);
@@ -3459,7 +3462,7 @@ index e3863a22e10d..0b03cbfa3e3f 100644
  		kasan_unpoison_object_data(s, object);
  		s->ctor(object);
  		kasan_poison_object_data(s, object);
-@@ -2712,9 +2795,23 @@ static __always_inline void *slab_alloc_node(struct kmem_cache *s,
+@@ -2712,9 +2798,21 @@ static __always_inline void *slab_alloc_node(struct kmem_cache *s,
  		stat(s, ALLOC_FASTPATH);
  	}
  
@@ -3474,17 +3477,15 @@ index e3863a22e10d..0b03cbfa3e3f 100644
 +	} else if (unlikely(gfpflags & __GFP_ZERO) && object)
  		memset(object, 0, s->object_size);
  
-+#ifdef CONFIG_SLAB_CANARY
 +	if (object) {
 +		check_canary(s, object, s->random_inactive);
 +		set_canary(s, object, s->random_active);
 +	}
-+#endif
 +
  	slab_post_alloc_hook(s, gfpflags, 1, &object);
  
  	return object;
-@@ -2921,6 +3018,29 @@ static __always_inline void do_slab_free(struct kmem_cache *s,
+@@ -2921,6 +3019,27 @@ static __always_inline void do_slab_free(struct kmem_cache *s,
  	void *tail_obj = tail ? : head;
  	struct kmem_cache_cpu *c;
  	unsigned long tid;
@@ -3495,10 +3496,8 @@ index e3863a22e10d..0b03cbfa3e3f 100644
 +		void *x = head;
 +
 +		while (1) {
-+#ifdef CONFIG_SLAB_CANARY
 +			check_canary(s, x, s->random_active);
 +			set_canary(s, x, s->random_inactive);
-+#endif
 +
 +			if (sanitize) {
 +				memset(x + offset, 0, s->object_size - offset);
@@ -3514,7 +3513,7 @@ index e3863a22e10d..0b03cbfa3e3f 100644
  redo:
  	/*
  	 * Determine the currently cpus per cpu slab.
-@@ -3099,7 +3219,7 @@ int kmem_cache_alloc_bulk(struct kmem_cache *s, gfp_t flags, size_t size,
+@@ -3099,7 +3218,7 @@ int kmem_cache_alloc_bulk(struct kmem_cache *s, gfp_t flags, size_t size,
  			  void **p)
  {
  	struct kmem_cache_cpu *c;
@@ -3523,7 +3522,7 @@ index e3863a22e10d..0b03cbfa3e3f 100644
  
  	/* memcg and kmem_cache debug support */
  	s = slab_pre_alloc_hook(s, flags);
-@@ -3136,13 +3256,31 @@ int kmem_cache_alloc_bulk(struct kmem_cache *s, gfp_t flags, size_t size,
+@@ -3136,13 +3255,29 @@ int kmem_cache_alloc_bulk(struct kmem_cache *s, gfp_t flags, size_t size,
  	local_irq_enable();
  
  	/* Clear memory outside IRQ disabled fastpath loop */
@@ -3546,17 +3545,15 @@ index e3863a22e10d..0b03cbfa3e3f 100644
  			memset(p[j], 0, s->object_size);
  	}
  
-+#ifdef CONFIG_SLAB_CANARY
 +	for (k = 0; k < i; k++) {
 +		check_canary(s, p[k], s->random_inactive);
 +		set_canary(s, p[k], s->random_active);
 +	}
-+#endif
 +
  	/* memcg and kmem_cache debug support */
  	slab_post_alloc_hook(s, flags, size, p);
  	return i;
-@@ -3174,9 +3312,9 @@ EXPORT_SYMBOL(kmem_cache_alloc_bulk);
+@@ -3174,9 +3309,9 @@ EXPORT_SYMBOL(kmem_cache_alloc_bulk);
   * and increases the number of allocations possible without having to
   * take the list_lock.
   */
@@ -3569,7 +3566,7 @@ index e3863a22e10d..0b03cbfa3e3f 100644
  
  /*
   * Calculate the order of allocation given an slab object size.
-@@ -3346,6 +3484,9 @@ static void early_kmem_cache_node_alloc(int node)
+@@ -3346,6 +3481,9 @@ static void early_kmem_cache_node_alloc(int node)
  	init_object(kmem_cache_node, n, SLUB_RED_ACTIVE);
  	init_tracking(kmem_cache_node, n);
  #endif
@@ -3579,7 +3576,7 @@ index e3863a22e10d..0b03cbfa3e3f 100644
  	kasan_kmalloc(kmem_cache_node, n, sizeof(struct kmem_cache_node),
  		      GFP_KERNEL);
  	init_kmem_cache_node(n);
-@@ -3469,6 +3610,9 @@ static int calculate_sizes(struct kmem_cache *s, int forced_order)
+@@ -3469,6 +3607,9 @@ static int calculate_sizes(struct kmem_cache *s, int forced_order)
  		size += sizeof(void *);
  	}
  
@@ -3589,7 +3586,7 @@ index e3863a22e10d..0b03cbfa3e3f 100644
  #ifdef CONFIG_SLUB_DEBUG
  	if (flags & SLAB_STORE_USER)
  		/*
-@@ -3535,6 +3679,13 @@ static int calculate_sizes(struct kmem_cache *s, int forced_order)
+@@ -3535,6 +3676,13 @@ static int calculate_sizes(struct kmem_cache *s, int forced_order)
  static int kmem_cache_open(struct kmem_cache *s, unsigned long flags)
  {
  	s->flags = kmem_cache_flags(s->size, flags, s->name, s->ctor);
@@ -3603,18 +3600,16 @@ index e3863a22e10d..0b03cbfa3e3f 100644
  	s->reserved = 0;
  
  	if (need_reserve_slab_rcu && (s->flags & SLAB_DESTROY_BY_RCU))
-@@ -3826,6 +3977,10 @@ const char *__check_heap_object(const void *ptr, unsigned long n,
+@@ -3826,6 +3974,8 @@ const char *__check_heap_object(const void *ptr, unsigned long n,
  		offset -= s->red_left_pad;
  	}
  
-+#ifdef CONFIG_SLAB_CANARY
 +	check_canary(s, (void *)ptr - offset, s->random_active);
-+#endif
 +
  	/* Allow address range falling entirely within object size. */
  	if (offset <= object_size && n <= object_size - offset)
  		return NULL;
-@@ -3844,7 +3999,11 @@ static size_t __ksize(const void *object)
+@@ -3844,7 +3994,11 @@ static size_t __ksize(const void *object)
  	page = virt_to_head_page(object);
  
  	if (unlikely(!PageSlab(page))) {
@@ -3626,7 +3621,7 @@ index e3863a22e10d..0b03cbfa3e3f 100644
  		return PAGE_SIZE << compound_order(page);
  	}
  
-@@ -4709,7 +4868,7 @@ enum slab_stat_type {
+@@ -4709,7 +4863,7 @@ enum slab_stat_type {
  #define SO_TOTAL	(1 << SL_TOTAL)
  
  #ifdef CONFIG_MEMCG
@@ -3767,3 +3762,17 @@ index e149f3ce5401..1a4ac530547f 100644
  	{
  		.ident = "Chrome Buddy",
  		.matches = {
+diff --git a/tools/objtool/builtin-check.c b/tools/objtool/builtin-check.c
+index 066086dd59a8..a2a44244d312 100644
+--- a/tools/objtool/builtin-check.c
++++ b/tools/objtool/builtin-check.c
+@@ -193,7 +193,8 @@ static int __dead_end_function(struct objtool_file *file, struct symbol *func,
+ 		"complete_and_exit",
+ 		"kvm_spurious_fault",
+ 		"__reiserfs_panic",
+-		"lbug_with_loc"
++		"lbug_with_loc",
++		"fortify_panic"
+ 	};
+ 
+ 	if (func->bind == STB_WEAK)
