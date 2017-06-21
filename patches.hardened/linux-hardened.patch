@@ -1,5 +1,5 @@
 diff --git a/Documentation/admin-guide/kernel-parameters.txt b/Documentation/admin-guide/kernel-parameters.txt
-index facc20a3f962..41f86a418eea 100644
+index facc20a3f962..834a7a060d96 100644
 --- a/Documentation/admin-guide/kernel-parameters.txt
 +++ b/Documentation/admin-guide/kernel-parameters.txt
 @@ -2808,6 +2808,11 @@
@@ -14,6 +14,20 @@ index facc20a3f962..41f86a418eea 100644
  	pcbit=		[HW,ISDN]
  
  	pcd.		[PARIDE]
+@@ -3779,6 +3784,13 @@
+ 	spia_pedr=
+ 	spia_peddr=
+ 
++	stack_guard_gap=	[MM]
++			override the default stack gap protection. The value
++			is in page units and it defines how many pages prior
++			to (for stacks growing down) resp. after (for stacks
++			growing up) the main stack are reserved for no other
++			mapping. Default value is 256 pages.
++
+ 	stacktrace	[FTRACE]
+ 			Enabled the stack tracer on boot up.
+ 
 diff --git a/Documentation/sysctl/kernel.txt b/Documentation/sysctl/kernel.txt
 index bac23c198360..f7985cf7ebde 100644
 --- a/Documentation/sysctl/kernel.txt
@@ -96,6 +110,41 @@ index cd211a14a88f..616eae29a214 100644
  	depends on HAVE_ARCH_MMAP_RND_COMPAT_BITS
  	help
  	  This value can be used to select the number of bits to use to
+diff --git a/arch/arc/mm/mmap.c b/arch/arc/mm/mmap.c
+index 3e25e8d6486b..2e13683dfb24 100644
+--- a/arch/arc/mm/mmap.c
++++ b/arch/arc/mm/mmap.c
+@@ -65,7 +65,7 @@ arch_get_unmapped_area(struct file *filp, unsigned long addr,
+ 
+ 		vma = find_vma(mm, addr);
+ 		if (TASK_SIZE - len >= addr &&
+-		    (!vma || addr + len <= vma->vm_start))
++		    (!vma || addr + len <= vm_start_gap(vma)))
+ 			return addr;
+ 	}
+ 
+diff --git a/arch/arm/mm/mmap.c b/arch/arm/mm/mmap.c
+index 2239fde10b80..f0701d8d24df 100644
+--- a/arch/arm/mm/mmap.c
++++ b/arch/arm/mm/mmap.c
+@@ -90,7 +90,7 @@ arch_get_unmapped_area(struct file *filp, unsigned long addr,
+ 
+ 		vma = find_vma(mm, addr);
+ 		if (TASK_SIZE - len >= addr &&
+-		    (!vma || addr + len <= vma->vm_start))
++		    (!vma || addr + len <= vm_start_gap(vma)))
+ 			return addr;
+ 	}
+ 
+@@ -141,7 +141,7 @@ arch_get_unmapped_area_topdown(struct file *filp, const unsigned long addr0,
+ 			addr = PAGE_ALIGN(addr);
+ 		vma = find_vma(mm, addr);
+ 		if (TASK_SIZE - len >= addr &&
+-				(!vma || addr + len <= vma->vm_start))
++				(!vma || addr + len <= vm_start_gap(vma)))
+ 			return addr;
+ 	}
+ 
 diff --git a/arch/arm64/Kconfig.debug b/arch/arm64/Kconfig.debug
 index fca2f02cde68..8e8d02b64424 100644
 --- a/arch/arm64/Kconfig.debug
@@ -251,6 +300,522 @@ index 7b0d55756eb1..6ac019f8c7df 100644
  
  	if (gap < MIN_GAP)
  		gap = MIN_GAP;
+diff --git a/arch/frv/mm/elf-fdpic.c b/arch/frv/mm/elf-fdpic.c
+index da82c25301e7..46aa289c5102 100644
+--- a/arch/frv/mm/elf-fdpic.c
++++ b/arch/frv/mm/elf-fdpic.c
+@@ -75,7 +75,7 @@ unsigned long arch_get_unmapped_area(struct file *filp, unsigned long addr, unsi
+ 		addr = PAGE_ALIGN(addr);
+ 		vma = find_vma(current->mm, addr);
+ 		if (TASK_SIZE - len >= addr &&
+-		    (!vma || addr + len <= vma->vm_start))
++		    (!vma || addr + len <= vm_start_gap(vma)))
+ 			goto success;
+ 	}
+ 
+diff --git a/arch/mips/mm/mmap.c b/arch/mips/mm/mmap.c
+index 64dd8bdd92c3..28adeabe851f 100644
+--- a/arch/mips/mm/mmap.c
++++ b/arch/mips/mm/mmap.c
+@@ -93,7 +93,7 @@ static unsigned long arch_get_unmapped_area_common(struct file *filp,
+ 
+ 		vma = find_vma(mm, addr);
+ 		if (TASK_SIZE - len >= addr &&
+-		    (!vma || addr + len <= vma->vm_start))
++		    (!vma || addr + len <= vm_start_gap(vma)))
+ 			return addr;
+ 	}
+ 
+diff --git a/arch/parisc/kernel/sys_parisc.c b/arch/parisc/kernel/sys_parisc.c
+index e5288638a1d9..378a754ca186 100644
+--- a/arch/parisc/kernel/sys_parisc.c
++++ b/arch/parisc/kernel/sys_parisc.c
+@@ -90,7 +90,7 @@ unsigned long arch_get_unmapped_area(struct file *filp, unsigned long addr,
+ 		unsigned long len, unsigned long pgoff, unsigned long flags)
+ {
+ 	struct mm_struct *mm = current->mm;
+-	struct vm_area_struct *vma;
++	struct vm_area_struct *vma, *prev;
+ 	unsigned long task_size = TASK_SIZE;
+ 	int do_color_align, last_mmap;
+ 	struct vm_unmapped_area_info info;
+@@ -117,9 +117,10 @@ unsigned long arch_get_unmapped_area(struct file *filp, unsigned long addr,
+ 		else
+ 			addr = PAGE_ALIGN(addr);
+ 
+-		vma = find_vma(mm, addr);
++		vma = find_vma_prev(mm, addr, &prev);
+ 		if (task_size - len >= addr &&
+-		    (!vma || addr + len <= vma->vm_start))
++		    (!vma || addr + len <= vm_start_gap(vma)) &&
++		    (!prev || addr >= vm_end_gap(prev)))
+ 			goto found_addr;
+ 	}
+ 
+@@ -143,7 +144,7 @@ arch_get_unmapped_area_topdown(struct file *filp, const unsigned long addr0,
+ 			  const unsigned long len, const unsigned long pgoff,
+ 			  const unsigned long flags)
+ {
+-	struct vm_area_struct *vma;
++	struct vm_area_struct *vma, *prev;
+ 	struct mm_struct *mm = current->mm;
+ 	unsigned long addr = addr0;
+ 	int do_color_align, last_mmap;
+@@ -177,9 +178,11 @@ arch_get_unmapped_area_topdown(struct file *filp, const unsigned long addr0,
+ 			addr = COLOR_ALIGN(addr, last_mmap, pgoff);
+ 		else
+ 			addr = PAGE_ALIGN(addr);
+-		vma = find_vma(mm, addr);
++
++		vma = find_vma_prev(mm, addr, &prev);
+ 		if (TASK_SIZE - len >= addr &&
+-		    (!vma || addr + len <= vma->vm_start))
++		    (!vma || addr + len <= vm_start_gap(vma)) &&
++		    (!prev || addr >= vm_end_gap(prev)))
+ 			goto found_addr;
+ 	}
+ 
+diff --git a/arch/powerpc/kernel/prom_init.c b/arch/powerpc/kernel/prom_init.c
+index 1c1b44ec7642..2e7b0319d522 100644
+--- a/arch/powerpc/kernel/prom_init.c
++++ b/arch/powerpc/kernel/prom_init.c
+@@ -15,6 +15,9 @@
+ 
+ #undef DEBUG_PROM
+ 
++/* we cannot use FORTIFY as it brings in new symbols */
++#define __NO_FORTIFY
++
+ #include <stdarg.h>
+ #include <linux/kernel.h>
+ #include <linux/string.h>
+diff --git a/arch/powerpc/lib/feature-fixups.c b/arch/powerpc/lib/feature-fixups.c
+index f3917705c686..41cf5ae273cf 100644
+--- a/arch/powerpc/lib/feature-fixups.c
++++ b/arch/powerpc/lib/feature-fixups.c
+@@ -233,192 +233,192 @@ static long calc_offset(struct fixup_entry *entry, unsigned int *p)
+ 
+ static void test_basic_patching(void)
+ {
+-	extern unsigned int ftr_fixup_test1;
+-	extern unsigned int end_ftr_fixup_test1;
+-	extern unsigned int ftr_fixup_test1_orig;
+-	extern unsigned int ftr_fixup_test1_expected;
+-	int size = &end_ftr_fixup_test1 - &ftr_fixup_test1;
++	extern unsigned int ftr_fixup_test1[];
++	extern unsigned int end_ftr_fixup_test1[];
++	extern unsigned int ftr_fixup_test1_orig[];
++	extern unsigned int ftr_fixup_test1_expected[];
++	int size = end_ftr_fixup_test1 - ftr_fixup_test1;
+ 
+ 	fixup.value = fixup.mask = 8;
+-	fixup.start_off = calc_offset(&fixup, &ftr_fixup_test1 + 1);
+-	fixup.end_off = calc_offset(&fixup, &ftr_fixup_test1 + 2);
++	fixup.start_off = calc_offset(&fixup, ftr_fixup_test1 + 1);
++	fixup.end_off = calc_offset(&fixup, ftr_fixup_test1 + 2);
+ 	fixup.alt_start_off = fixup.alt_end_off = 0;
+ 
+ 	/* Sanity check */
+-	check(memcmp(&ftr_fixup_test1, &ftr_fixup_test1_orig, size) == 0);
++	check(memcmp(ftr_fixup_test1, ftr_fixup_test1_orig, size) == 0);
+ 
+ 	/* Check we don't patch if the value matches */
+ 	patch_feature_section(8, &fixup);
+-	check(memcmp(&ftr_fixup_test1, &ftr_fixup_test1_orig, size) == 0);
++	check(memcmp(ftr_fixup_test1, ftr_fixup_test1_orig, size) == 0);
+ 
+ 	/* Check we do patch if the value doesn't match */
+ 	patch_feature_section(0, &fixup);
+-	check(memcmp(&ftr_fixup_test1, &ftr_fixup_test1_expected, size) == 0);
++	check(memcmp(ftr_fixup_test1, ftr_fixup_test1_expected, size) == 0);
+ 
+ 	/* Check we do patch if the mask doesn't match */
+-	memcpy(&ftr_fixup_test1, &ftr_fixup_test1_orig, size);
+-	check(memcmp(&ftr_fixup_test1, &ftr_fixup_test1_orig, size) == 0);
++	memcpy(ftr_fixup_test1, ftr_fixup_test1_orig, size);
++	check(memcmp(ftr_fixup_test1, ftr_fixup_test1_orig, size) == 0);
+ 	patch_feature_section(~8, &fixup);
+-	check(memcmp(&ftr_fixup_test1, &ftr_fixup_test1_expected, size) == 0);
++	check(memcmp(ftr_fixup_test1, ftr_fixup_test1_expected, size) == 0);
+ }
+ 
+ static void test_alternative_patching(void)
+ {
+-	extern unsigned int ftr_fixup_test2;
+-	extern unsigned int end_ftr_fixup_test2;
+-	extern unsigned int ftr_fixup_test2_orig;
+-	extern unsigned int ftr_fixup_test2_alt;
+-	extern unsigned int ftr_fixup_test2_expected;
+-	int size = &end_ftr_fixup_test2 - &ftr_fixup_test2;
++	extern unsigned int ftr_fixup_test2[];
++	extern unsigned int end_ftr_fixup_test2[];
++	extern unsigned int ftr_fixup_test2_orig[];
++	extern unsigned int ftr_fixup_test2_alt[];
++	extern unsigned int ftr_fixup_test2_expected[];
++	int size = end_ftr_fixup_test2 - ftr_fixup_test2;
+ 
+ 	fixup.value = fixup.mask = 0xF;
+-	fixup.start_off = calc_offset(&fixup, &ftr_fixup_test2 + 1);
+-	fixup.end_off = calc_offset(&fixup, &ftr_fixup_test2 + 2);
+-	fixup.alt_start_off = calc_offset(&fixup, &ftr_fixup_test2_alt);
+-	fixup.alt_end_off = calc_offset(&fixup, &ftr_fixup_test2_alt + 1);
++	fixup.start_off = calc_offset(&fixup, ftr_fixup_test2 + 1);
++	fixup.end_off = calc_offset(&fixup, ftr_fixup_test2 + 2);
++	fixup.alt_start_off = calc_offset(&fixup, ftr_fixup_test2_alt);
++	fixup.alt_end_off = calc_offset(&fixup, ftr_fixup_test2_alt + 1);
+ 
+ 	/* Sanity check */
+-	check(memcmp(&ftr_fixup_test2, &ftr_fixup_test2_orig, size) == 0);
++	check(memcmp(ftr_fixup_test2, ftr_fixup_test2_orig, size) == 0);
+ 
+ 	/* Check we don't patch if the value matches */
+ 	patch_feature_section(0xF, &fixup);
+-	check(memcmp(&ftr_fixup_test2, &ftr_fixup_test2_orig, size) == 0);
++	check(memcmp(ftr_fixup_test2, ftr_fixup_test2_orig, size) == 0);
+ 
+ 	/* Check we do patch if the value doesn't match */
+ 	patch_feature_section(0, &fixup);
+-	check(memcmp(&ftr_fixup_test2, &ftr_fixup_test2_expected, size) == 0);
++	check(memcmp(ftr_fixup_test2, ftr_fixup_test2_expected, size) == 0);
+ 
+ 	/* Check we do patch if the mask doesn't match */
+-	memcpy(&ftr_fixup_test2, &ftr_fixup_test2_orig, size);
+-	check(memcmp(&ftr_fixup_test2, &ftr_fixup_test2_orig, size) == 0);
++	memcpy(ftr_fixup_test2, ftr_fixup_test2_orig, size);
++	check(memcmp(ftr_fixup_test2, ftr_fixup_test2_orig, size) == 0);
+ 	patch_feature_section(~0xF, &fixup);
+-	check(memcmp(&ftr_fixup_test2, &ftr_fixup_test2_expected, size) == 0);
++	check(memcmp(ftr_fixup_test2, ftr_fixup_test2_expected, size) == 0);
+ }
+ 
+ static void test_alternative_case_too_big(void)
+ {
+-	extern unsigned int ftr_fixup_test3;
+-	extern unsigned int end_ftr_fixup_test3;
+-	extern unsigned int ftr_fixup_test3_orig;
+-	extern unsigned int ftr_fixup_test3_alt;
+-	int size = &end_ftr_fixup_test3 - &ftr_fixup_test3;
++	extern unsigned int ftr_fixup_test3[];
++	extern unsigned int end_ftr_fixup_test3[];
++	extern unsigned int ftr_fixup_test3_orig[];
++	extern unsigned int ftr_fixup_test3_alt[];
++	int size = end_ftr_fixup_test3 - ftr_fixup_test3;
+ 
+ 	fixup.value = fixup.mask = 0xC;
+-	fixup.start_off = calc_offset(&fixup, &ftr_fixup_test3 + 1);
+-	fixup.end_off = calc_offset(&fixup, &ftr_fixup_test3 + 2);
+-	fixup.alt_start_off = calc_offset(&fixup, &ftr_fixup_test3_alt);
+-	fixup.alt_end_off = calc_offset(&fixup, &ftr_fixup_test3_alt + 2);
++	fixup.start_off = calc_offset(&fixup, ftr_fixup_test3 + 1);
++	fixup.end_off = calc_offset(&fixup, ftr_fixup_test3 + 2);
++	fixup.alt_start_off = calc_offset(&fixup, ftr_fixup_test3_alt);
++	fixup.alt_end_off = calc_offset(&fixup, ftr_fixup_test3_alt + 2);
+ 
+ 	/* Sanity check */
+-	check(memcmp(&ftr_fixup_test3, &ftr_fixup_test3_orig, size) == 0);
++	check(memcmp(ftr_fixup_test3, ftr_fixup_test3_orig, size) == 0);
+ 
+ 	/* Expect nothing to be patched, and the error returned to us */
+ 	check(patch_feature_section(0xF, &fixup) == 1);
+-	check(memcmp(&ftr_fixup_test3, &ftr_fixup_test3_orig, size) == 0);
++	check(memcmp(ftr_fixup_test3, ftr_fixup_test3_orig, size) == 0);
+ 	check(patch_feature_section(0, &fixup) == 1);
+-	check(memcmp(&ftr_fixup_test3, &ftr_fixup_test3_orig, size) == 0);
++	check(memcmp(ftr_fixup_test3, ftr_fixup_test3_orig, size) == 0);
+ 	check(patch_feature_section(~0xF, &fixup) == 1);
+-	check(memcmp(&ftr_fixup_test3, &ftr_fixup_test3_orig, size) == 0);
++	check(memcmp(ftr_fixup_test3, ftr_fixup_test3_orig, size) == 0);
+ }
+ 
+ static void test_alternative_case_too_small(void)
+ {
+-	extern unsigned int ftr_fixup_test4;
+-	extern unsigned int end_ftr_fixup_test4;
+-	extern unsigned int ftr_fixup_test4_orig;
+-	extern unsigned int ftr_fixup_test4_alt;
+-	extern unsigned int ftr_fixup_test4_expected;
+-	int size = &end_ftr_fixup_test4 - &ftr_fixup_test4;
++	extern unsigned int ftr_fixup_test4[];
++	extern unsigned int end_ftr_fixup_test4[];
++	extern unsigned int ftr_fixup_test4_orig[];
++	extern unsigned int ftr_fixup_test4_alt[];
++	extern unsigned int ftr_fixup_test4_expected[];
++	int size = end_ftr_fixup_test4 - ftr_fixup_test4;
+ 	unsigned long flag;
+ 
+ 	/* Check a high-bit flag */
+ 	flag = 1UL << ((sizeof(unsigned long) - 1) * 8);
+ 	fixup.value = fixup.mask = flag;
+-	fixup.start_off = calc_offset(&fixup, &ftr_fixup_test4 + 1);
+-	fixup.end_off = calc_offset(&fixup, &ftr_fixup_test4 + 5);
+-	fixup.alt_start_off = calc_offset(&fixup, &ftr_fixup_test4_alt);
+-	fixup.alt_end_off = calc_offset(&fixup, &ftr_fixup_test4_alt + 2);
++	fixup.start_off = calc_offset(&fixup, ftr_fixup_test4 + 1);
++	fixup.end_off = calc_offset(&fixup, ftr_fixup_test4 + 5);
++	fixup.alt_start_off = calc_offset(&fixup, ftr_fixup_test4_alt);
++	fixup.alt_end_off = calc_offset(&fixup, ftr_fixup_test4_alt + 2);
+ 
+ 	/* Sanity check */
+-	check(memcmp(&ftr_fixup_test4, &ftr_fixup_test4_orig, size) == 0);
++	check(memcmp(ftr_fixup_test4, ftr_fixup_test4_orig, size) == 0);
+ 
+ 	/* Check we don't patch if the value matches */
+ 	patch_feature_section(flag, &fixup);
+-	check(memcmp(&ftr_fixup_test4, &ftr_fixup_test4_orig, size) == 0);
++	check(memcmp(ftr_fixup_test4, ftr_fixup_test4_orig, size) == 0);
+ 
+ 	/* Check we do patch if the value doesn't match */
+ 	patch_feature_section(0, &fixup);
+-	check(memcmp(&ftr_fixup_test4, &ftr_fixup_test4_expected, size) == 0);
++	check(memcmp(ftr_fixup_test4, ftr_fixup_test4_expected, size) == 0);
+ 
+ 	/* Check we do patch if the mask doesn't match */
+-	memcpy(&ftr_fixup_test4, &ftr_fixup_test4_orig, size);
+-	check(memcmp(&ftr_fixup_test4, &ftr_fixup_test4_orig, size) == 0);
++	memcpy(ftr_fixup_test4, ftr_fixup_test4_orig, size);
++	check(memcmp(ftr_fixup_test4, ftr_fixup_test4_orig, size) == 0);
+ 	patch_feature_section(~flag, &fixup);
+-	check(memcmp(&ftr_fixup_test4, &ftr_fixup_test4_expected, size) == 0);
++	check(memcmp(ftr_fixup_test4, ftr_fixup_test4_expected, size) == 0);
+ }
+ 
+ static void test_alternative_case_with_branch(void)
+ {
+-	extern unsigned int ftr_fixup_test5;
+-	extern unsigned int end_ftr_fixup_test5;
+-	extern unsigned int ftr_fixup_test5_expected;
+-	int size = &end_ftr_fixup_test5 - &ftr_fixup_test5;
++	extern unsigned int ftr_fixup_test5[];
++	extern unsigned int end_ftr_fixup_test5[];
++	extern unsigned int ftr_fixup_test5_expected[];
++	int size = end_ftr_fixup_test5 - ftr_fixup_test5;
+ 
+-	check(memcmp(&ftr_fixup_test5, &ftr_fixup_test5_expected, size) == 0);
++	check(memcmp(ftr_fixup_test5, ftr_fixup_test5_expected, size) == 0);
+ }
+ 
+ static void test_alternative_case_with_external_branch(void)
+ {
+-	extern unsigned int ftr_fixup_test6;
+-	extern unsigned int end_ftr_fixup_test6;
+-	extern unsigned int ftr_fixup_test6_expected;
+-	int size = &end_ftr_fixup_test6 - &ftr_fixup_test6;
++	extern unsigned int ftr_fixup_test6[];
++	extern unsigned int end_ftr_fixup_test6[];
++	extern unsigned int ftr_fixup_test6_expected[];
++	int size = end_ftr_fixup_test6 - ftr_fixup_test6;
+ 
+-	check(memcmp(&ftr_fixup_test6, &ftr_fixup_test6_expected, size) == 0);
++	check(memcmp(ftr_fixup_test6, ftr_fixup_test6_expected, size) == 0);
+ }
+ 
+ static void test_cpu_macros(void)
+ {
+-	extern u8 ftr_fixup_test_FTR_macros;
+-	extern u8 ftr_fixup_test_FTR_macros_expected;
+-	unsigned long size = &ftr_fixup_test_FTR_macros_expected -
+-			     &ftr_fixup_test_FTR_macros;
++	extern u8 ftr_fixup_test_FTR_macros[];
++	extern u8 ftr_fixup_test_FTR_macros_expected[];
++	unsigned long size = ftr_fixup_test_FTR_macros_expected -
++			     ftr_fixup_test_FTR_macros;
+ 
+ 	/* The fixups have already been done for us during boot */
+-	check(memcmp(&ftr_fixup_test_FTR_macros,
+-		     &ftr_fixup_test_FTR_macros_expected, size) == 0);
++	check(memcmp(ftr_fixup_test_FTR_macros,
++		     ftr_fixup_test_FTR_macros_expected, size) == 0);
+ }
+ 
+ static void test_fw_macros(void)
+ {
+ #ifdef CONFIG_PPC64
+-	extern u8 ftr_fixup_test_FW_FTR_macros;
+-	extern u8 ftr_fixup_test_FW_FTR_macros_expected;
+-	unsigned long size = &ftr_fixup_test_FW_FTR_macros_expected -
+-			     &ftr_fixup_test_FW_FTR_macros;
++	extern u8 ftr_fixup_test_FW_FTR_macros[];
++	extern u8 ftr_fixup_test_FW_FTR_macros_expected[];
++	unsigned long size = ftr_fixup_test_FW_FTR_macros_expected -
++			     ftr_fixup_test_FW_FTR_macros;
+ 
+ 	/* The fixups have already been done for us during boot */
+-	check(memcmp(&ftr_fixup_test_FW_FTR_macros,
+-		     &ftr_fixup_test_FW_FTR_macros_expected, size) == 0);
++	check(memcmp(ftr_fixup_test_FW_FTR_macros,
++		     ftr_fixup_test_FW_FTR_macros_expected, size) == 0);
+ #endif
+ }
+ 
+ static void test_lwsync_macros(void)
+ {
+-	extern u8 lwsync_fixup_test;
+-	extern u8 end_lwsync_fixup_test;
+-	extern u8 lwsync_fixup_test_expected_LWSYNC;
+-	extern u8 lwsync_fixup_test_expected_SYNC;
+-	unsigned long size = &end_lwsync_fixup_test -
+-			     &lwsync_fixup_test;
++	extern u8 lwsync_fixup_test[];
++	extern u8 end_lwsync_fixup_test[];
++	extern u8 lwsync_fixup_test_expected_LWSYNC[];
++	extern u8 lwsync_fixup_test_expected_SYNC[];
++	unsigned long size = end_lwsync_fixup_test -
++			     lwsync_fixup_test;
+ 
+ 	/* The fixups have already been done for us during boot */
+ 	if (cur_cpu_spec->cpu_features & CPU_FTR_LWSYNC) {
+-		check(memcmp(&lwsync_fixup_test,
+-			     &lwsync_fixup_test_expected_LWSYNC, size) == 0);
++		check(memcmp(lwsync_fixup_test,
++			     lwsync_fixup_test_expected_LWSYNC, size) == 0);
+ 	} else {
+-		check(memcmp(&lwsync_fixup_test,
+-			     &lwsync_fixup_test_expected_SYNC, size) == 0);
++		check(memcmp(lwsync_fixup_test,
++			     lwsync_fixup_test_expected_SYNC, size) == 0);
+ 	}
+ }
+ 
+diff --git a/arch/powerpc/mm/hugetlbpage-radix.c b/arch/powerpc/mm/hugetlbpage-radix.c
+index 35254a678456..a2b2d97f7eda 100644
+--- a/arch/powerpc/mm/hugetlbpage-radix.c
++++ b/arch/powerpc/mm/hugetlbpage-radix.c
+@@ -65,7 +65,7 @@ radix__hugetlb_get_unmapped_area(struct file *file, unsigned long addr,
+ 		addr = ALIGN(addr, huge_page_size(h));
+ 		vma = find_vma(mm, addr);
+ 		if (TASK_SIZE - len >= addr &&
+-		    (!vma || addr + len <= vma->vm_start))
++		    (!vma || addr + len <= vm_start_gap(vma)))
+ 			return addr;
+ 	}
+ 	/*
+diff --git a/arch/powerpc/mm/mmap.c b/arch/powerpc/mm/mmap.c
+index a5d9ef59debe..04a6493b68ad 100644
+--- a/arch/powerpc/mm/mmap.c
++++ b/arch/powerpc/mm/mmap.c
+@@ -107,7 +107,7 @@ radix__arch_get_unmapped_area(struct file *filp, unsigned long addr,
+ 		addr = PAGE_ALIGN(addr);
+ 		vma = find_vma(mm, addr);
+ 		if (TASK_SIZE - len >= addr && addr >= mmap_min_addr &&
+-		    (!vma || addr + len <= vma->vm_start))
++		    (!vma || addr + len <= vm_start_gap(vma)))
+ 			return addr;
+ 	}
+ 
+@@ -143,7 +143,7 @@ radix__arch_get_unmapped_area_topdown(struct file *filp,
+ 		addr = PAGE_ALIGN(addr);
+ 		vma = find_vma(mm, addr);
+ 		if (TASK_SIZE - len >= addr && addr >= mmap_min_addr &&
+-				(!vma || addr + len <= vma->vm_start))
++				(!vma || addr + len <= vm_start_gap(vma)))
+ 			return addr;
+ 	}
+ 
+diff --git a/arch/powerpc/mm/slice.c b/arch/powerpc/mm/slice.c
+index 2b27458902ee..c4d5c9c61e0f 100644
+--- a/arch/powerpc/mm/slice.c
++++ b/arch/powerpc/mm/slice.c
+@@ -105,7 +105,7 @@ static int slice_area_is_free(struct mm_struct *mm, unsigned long addr,
+ 	if ((mm->task_size - len) < addr)
+ 		return 0;
+ 	vma = find_vma(mm, addr);
+-	return (!vma || (addr + len) <= vma->vm_start);
++	return (!vma || (addr + len) <= vm_start_gap(vma));
+ }
+ 
+ static int slice_low_has_vma(struct mm_struct *mm, unsigned long slice)
+diff --git a/arch/s390/mm/mmap.c b/arch/s390/mm/mmap.c
+index 50618614881f..531e9d5f803a 100644
+--- a/arch/s390/mm/mmap.c
++++ b/arch/s390/mm/mmap.c
+@@ -100,7 +100,7 @@ arch_get_unmapped_area(struct file *filp, unsigned long addr,
+ 		addr = PAGE_ALIGN(addr);
+ 		vma = find_vma(mm, addr);
+ 		if (TASK_SIZE - len >= addr && addr >= mmap_min_addr &&
+-		    (!vma || addr + len <= vma->vm_start))
++		    (!vma || addr + len <= vm_start_gap(vma)))
+ 			return addr;
+ 	}
+ 
+@@ -138,7 +138,7 @@ arch_get_unmapped_area_topdown(struct file *filp, const unsigned long addr0,
+ 		addr = PAGE_ALIGN(addr);
+ 		vma = find_vma(mm, addr);
+ 		if (TASK_SIZE - len >= addr && addr >= mmap_min_addr &&
+-				(!vma || addr + len <= vma->vm_start))
++				(!vma || addr + len <= vm_start_gap(vma)))
+ 			return addr;
+ 	}
+ 
+diff --git a/arch/sh/mm/mmap.c b/arch/sh/mm/mmap.c
+index 08e7af0be4a7..6a1a1297baae 100644
+--- a/arch/sh/mm/mmap.c
++++ b/arch/sh/mm/mmap.c
+@@ -64,7 +64,7 @@ unsigned long arch_get_unmapped_area(struct file *filp, unsigned long addr,
+ 
+ 		vma = find_vma(mm, addr);
+ 		if (TASK_SIZE - len >= addr &&
+-		    (!vma || addr + len <= vma->vm_start))
++		    (!vma || addr + len <= vm_start_gap(vma)))
+ 			return addr;
+ 	}
+ 
+@@ -114,7 +114,7 @@ arch_get_unmapped_area_topdown(struct file *filp, const unsigned long addr0,
+ 
+ 		vma = find_vma(mm, addr);
+ 		if (TASK_SIZE - len >= addr &&
+-		    (!vma || addr + len <= vma->vm_start))
++		    (!vma || addr + len <= vm_start_gap(vma)))
+ 			return addr;
+ 	}
+ 
+diff --git a/arch/sparc/kernel/sys_sparc_64.c b/arch/sparc/kernel/sys_sparc_64.c
+index ef4520efc813..043544d0cda3 100644
+--- a/arch/sparc/kernel/sys_sparc_64.c
++++ b/arch/sparc/kernel/sys_sparc_64.c
+@@ -120,7 +120,7 @@ unsigned long arch_get_unmapped_area(struct file *filp, unsigned long addr, unsi
+ 
+ 		vma = find_vma(mm, addr);
+ 		if (task_size - len >= addr &&
+-		    (!vma || addr + len <= vma->vm_start))
++		    (!vma || addr + len <= vm_start_gap(vma)))
+ 			return addr;
+ 	}
+ 
+@@ -183,7 +183,7 @@ arch_get_unmapped_area_topdown(struct file *filp, const unsigned long addr0,
+ 
+ 		vma = find_vma(mm, addr);
+ 		if (task_size - len >= addr &&
+-		    (!vma || addr + len <= vma->vm_start))
++		    (!vma || addr + len <= vm_start_gap(vma)))
+ 			return addr;
+ 	}
+ 
+diff --git a/arch/sparc/mm/hugetlbpage.c b/arch/sparc/mm/hugetlbpage.c
+index 7c29d38e6b99..88855e383b34 100644
+--- a/arch/sparc/mm/hugetlbpage.c
++++ b/arch/sparc/mm/hugetlbpage.c
+@@ -120,7 +120,7 @@ hugetlb_get_unmapped_area(struct file *file, unsigned long addr,
+ 		addr = ALIGN(addr, huge_page_size(h));
+ 		vma = find_vma(mm, addr);
+ 		if (task_size - len >= addr &&
+-		    (!vma || addr + len <= vma->vm_start))
++		    (!vma || addr + len <= vm_start_gap(vma)))
+ 			return addr;
+ 	}
+ 	if (mm->get_unmapped_area == arch_get_unmapped_area)
+diff --git a/arch/tile/mm/hugetlbpage.c b/arch/tile/mm/hugetlbpage.c
+index cb10153b5c9f..03e5cc4e76e4 100644
+--- a/arch/tile/mm/hugetlbpage.c
++++ b/arch/tile/mm/hugetlbpage.c
+@@ -233,7 +233,7 @@ unsigned long hugetlb_get_unmapped_area(struct file *file, unsigned long addr,
+ 		addr = ALIGN(addr, huge_page_size(h));
+ 		vma = find_vma(mm, addr);
+ 		if (TASK_SIZE - len >= addr &&
+-		    (!vma || addr + len <= vma->vm_start))
++		    (!vma || addr + len <= vm_start_gap(vma)))
+ 			return addr;
+ 	}
+ 	if (current->mm->get_unmapped_area == arch_get_unmapped_area)
 diff --git a/arch/x86/Kconfig b/arch/x86/Kconfig
 index cc98d5a294ee..f75caf807cfc 100644
 --- a/arch/x86/Kconfig
@@ -724,7 +1289,7 @@ index 067f9813fd2c..1ae0adcc0811 100644
  	/* Acer */
  	{	/* Handle reboot issue on Acer Aspire one */
 diff --git a/arch/x86/kernel/sys_x86_64.c b/arch/x86/kernel/sys_x86_64.c
-index 50215a4b9347..884702732f83 100644
+index 50215a4b9347..8901acf79f93 100644
 --- a/arch/x86/kernel/sys_x86_64.c
 +++ b/arch/x86/kernel/sys_x86_64.c
 @@ -50,13 +50,6 @@ static unsigned long get_align_bits(void)
@@ -741,6 +1306,37 @@ index 50215a4b9347..884702732f83 100644
  static int __init control_va_addr_alignment(char *str)
  {
  	/* guard against enabling this on other CPU families */
+@@ -141,7 +134,7 @@ arch_get_unmapped_area(struct file *filp, unsigned long addr,
+ 		addr = PAGE_ALIGN(addr);
+ 		vma = find_vma(mm, addr);
+ 		if (end - len >= addr &&
+-		    (!vma || addr + len <= vma->vm_start))
++		    (!vma || addr + len <= vm_start_gap(vma)))
+ 			return addr;
+ 	}
+ 
+@@ -184,7 +177,7 @@ arch_get_unmapped_area_topdown(struct file *filp, const unsigned long addr0,
+ 		addr = PAGE_ALIGN(addr);
+ 		vma = find_vma(mm, addr);
+ 		if (TASK_SIZE - len >= addr &&
+-				(!vma || addr + len <= vma->vm_start))
++				(!vma || addr + len <= vm_start_gap(vma)))
+ 			return addr;
+ 	}
+ 
+diff --git a/arch/x86/mm/hugetlbpage.c b/arch/x86/mm/hugetlbpage.c
+index c5066a260803..7d09827d7083 100644
+--- a/arch/x86/mm/hugetlbpage.c
++++ b/arch/x86/mm/hugetlbpage.c
+@@ -145,7 +145,7 @@ hugetlb_get_unmapped_area(struct file *file, unsigned long addr,
+ 		addr = ALIGN(addr, huge_page_size(h));
+ 		vma = find_vma(mm, addr);
+ 		if (TASK_SIZE - len >= addr &&
+-		    (!vma || addr + len <= vma->vm_start))
++		    (!vma || addr + len <= vm_start_gap(vma)))
+ 			return addr;
+ 	}
+ 	if (mm->get_unmapped_area == arch_get_unmapped_area)
 diff --git a/arch/x86/mm/init_32.c b/arch/x86/mm/init_32.c
 index 2b4b53e6793f..d532b4c3407b 100644
 --- a/arch/x86/mm/init_32.c
@@ -883,6 +1479,19 @@ index ded2e8272382..a5da8276feec 100644
  	rdr->cr3 = restore_cr3;
  	rdr->magic = RESTORE_MAGIC;
  
+diff --git a/arch/xtensa/kernel/syscall.c b/arch/xtensa/kernel/syscall.c
+index 06937928cb72..74afbf02d07e 100644
+--- a/arch/xtensa/kernel/syscall.c
++++ b/arch/xtensa/kernel/syscall.c
+@@ -88,7 +88,7 @@ unsigned long arch_get_unmapped_area(struct file *filp, unsigned long addr,
+ 		/* At this point:  (!vmm || addr < vmm->vm_end). */
+ 		if (TASK_SIZE - len < addr)
+ 			return -ENOMEM;
+-		if (!vmm || addr + len <= vmm->vm_start)
++		if (!vmm || addr + len <= vm_start_gap(vmm))
+ 			return addr;
+ 		addr = vmm->vm_end;
+ 		if (flags & MAP_SHARED)
 diff --git a/drivers/acpi/acpi_video.c b/drivers/acpi/acpi_video.c
 index d00bc0ef87a6..315bcacb0f8c 100644
 --- a/drivers/acpi/acpi_video.c
@@ -1091,6 +1700,18 @@ index 9f013ed42977..80ac313e6c59 100644
  	{
  		.callback = acer_cpufreq_pst,
  		.ident = "Acer Aspire",
+diff --git a/drivers/firmware/efi/libstub/Makefile b/drivers/firmware/efi/libstub/Makefile
+index f7425960f6a5..37e24f525162 100644
+--- a/drivers/firmware/efi/libstub/Makefile
++++ b/drivers/firmware/efi/libstub/Makefile
+@@ -17,6 +17,7 @@ cflags-$(CONFIG_ARM)		:= $(subst -pg,,$(KBUILD_CFLAGS)) \
+ cflags-$(CONFIG_EFI_ARMSTUB)	+= -I$(srctree)/scripts/dtc/libfdt
+ 
+ KBUILD_CFLAGS			:= $(cflags-y) -DDISABLE_BRANCH_PROFILING \
++				   -D__NO_FORTIFY \
+ 				   $(call cc-option,-ffreestanding) \
+ 				   $(call cc-option,-fno-stack-protector)
+ 
 diff --git a/drivers/firmware/google/gsmi.c b/drivers/firmware/google/gsmi.c
 index c46387160976..c8f169bf2e27 100644
 --- a/drivers/firmware/google/gsmi.c
@@ -1166,15 +1787,17 @@ index 34704b0451b4..eddfc67cdf6e 100644
  		.ident = "Dell Studio XPS 8000",
  		.matches = {
 diff --git a/drivers/infiniband/sw/rxe/rxe_resp.c b/drivers/infiniband/sw/rxe/rxe_resp.c
-index c9dd385ce62e..d9df3d6b539e 100644
+index c9dd385ce62e..2d115e03ca22 100644
 --- a/drivers/infiniband/sw/rxe/rxe_resp.c
 +++ b/drivers/infiniband/sw/rxe/rxe_resp.c
-@@ -994,7 +994,7 @@ static int send_atomic_ack(struct rxe_qp *qp, struct rxe_pkt_info *pkt,
+@@ -994,7 +994,9 @@ static int send_atomic_ack(struct rxe_qp *qp, struct rxe_pkt_info *pkt,
  	free_rd_atomic_resource(qp, res);
  	rxe_advance_resp_resource(qp);
  
 -	memcpy(SKB_TO_PKT(skb), &ack_pkt, sizeof(skb->cb));
-+	__builtin_memcpy(SKB_TO_PKT(skb), &ack_pkt, sizeof(skb->cb));
++	memcpy(SKB_TO_PKT(skb), &ack_pkt, sizeof(ack_pkt));
++	memset((unsigned char *)SKB_TO_PKT(skb) + sizeof(ack_pkt), 0,
++	       sizeof(skb->cb) - sizeof(ack_pkt));
  
  	res->type = RXE_ATOMIC_MASK;
  	res->atomic.skb = skb;
@@ -1705,18 +2328,123 @@ index 0ced908e7aa8..e681140b85d8 100644
  	 .callback = exploding_pnp_bios,
  	 .ident = "Higraded P14H",
 diff --git a/drivers/scsi/csiostor/csio_lnode.c b/drivers/scsi/csiostor/csio_lnode.c
-index c00b2ff72b55..3ae2b41aa359 100644
+index c00b2ff72b55..be5ee2d37815 100644
 --- a/drivers/scsi/csiostor/csio_lnode.c
 +++ b/drivers/scsi/csiostor/csio_lnode.c
-@@ -245,7 +245,7 @@ csio_append_attrib(uint8_t **ptr, uint16_t type, uint8_t *val, uint16_t len)
+@@ -238,14 +238,23 @@ csio_osname(uint8_t *buf, size_t buf_len)
+ }
+ 
+ static inline void
+-csio_append_attrib(uint8_t **ptr, uint16_t type, uint8_t *val, uint16_t len)
++csio_append_attrib(uint8_t **ptr, uint16_t type, void *val, size_t val_len)
+ {
++	uint16_t len;
+ 	struct fc_fdmi_attr_entry *ae = (struct fc_fdmi_attr_entry *)*ptr;
++
++	if (WARN_ON(val_len > U16_MAX))
++		return;
++
++	len = val_len;
++
+ 	ae->type = htons(type);
  	len += 4;		/* includes attribute type and length */
  	len = (len + 3) & ~3;	/* should be multiple of 4 bytes */
  	ae->len = htons(len);
 -	memcpy(ae->value, val, len);
-+	__builtin_memcpy(ae->value, val, len);
++	memcpy(ae->value, val, val_len);
++	if (len > val_len)
++		memset(ae->value + val_len, 0, len - val_len);
  	*ptr += len;
  }
  
+@@ -335,7 +344,7 @@ csio_ln_fdmi_rhba_cbfn(struct csio_hw *hw, struct csio_ioreq *fdmi_req)
+ 	numattrs++;
+ 	val = htonl(FC_PORTSPEED_1GBIT | FC_PORTSPEED_10GBIT);
+ 	csio_append_attrib(&pld, FC_FDMI_PORT_ATTR_SUPPORTEDSPEED,
+-			   (uint8_t *)&val,
++			   &val,
+ 			   FC_FDMI_PORT_ATTR_SUPPORTEDSPEED_LEN);
+ 	numattrs++;
+ 
+@@ -346,23 +355,22 @@ csio_ln_fdmi_rhba_cbfn(struct csio_hw *hw, struct csio_ioreq *fdmi_req)
+ 	else
+ 		val = htonl(CSIO_HBA_PORTSPEED_UNKNOWN);
+ 	csio_append_attrib(&pld, FC_FDMI_PORT_ATTR_CURRENTPORTSPEED,
+-			   (uint8_t *)&val,
+-			   FC_FDMI_PORT_ATTR_CURRENTPORTSPEED_LEN);
++			   &val, FC_FDMI_PORT_ATTR_CURRENTPORTSPEED_LEN);
+ 	numattrs++;
+ 
+ 	mfs = ln->ln_sparm.csp.sp_bb_data;
+ 	csio_append_attrib(&pld, FC_FDMI_PORT_ATTR_MAXFRAMESIZE,
+-			   (uint8_t *)&mfs, FC_FDMI_PORT_ATTR_MAXFRAMESIZE_LEN);
++			   &mfs, sizeof(mfs));
+ 	numattrs++;
+ 
+ 	strcpy(buf, "csiostor");
+ 	csio_append_attrib(&pld, FC_FDMI_PORT_ATTR_OSDEVICENAME, buf,
+-			   (uint16_t)strlen(buf));
++			   strlen(buf));
+ 	numattrs++;
+ 
+ 	if (!csio_hostname(buf, sizeof(buf))) {
+ 		csio_append_attrib(&pld, FC_FDMI_PORT_ATTR_HOSTNAME,
+-				   buf, (uint16_t)strlen(buf));
++				   buf, strlen(buf));
+ 		numattrs++;
+ 	}
+ 	attrib_blk->numattrs = htonl(numattrs);
+@@ -444,33 +452,32 @@ csio_ln_fdmi_dprt_cbfn(struct csio_hw *hw, struct csio_ioreq *fdmi_req)
+ 
+ 	strcpy(buf, "Chelsio Communications");
+ 	csio_append_attrib(&pld, FC_FDMI_HBA_ATTR_MANUFACTURER, buf,
+-			   (uint16_t)strlen(buf));
++			   strlen(buf));
+ 	numattrs++;
+ 	csio_append_attrib(&pld, FC_FDMI_HBA_ATTR_SERIALNUMBER,
+-			   hw->vpd.sn, (uint16_t)sizeof(hw->vpd.sn));
++			   hw->vpd.sn, sizeof(hw->vpd.sn));
+ 	numattrs++;
+ 	csio_append_attrib(&pld, FC_FDMI_HBA_ATTR_MODEL, hw->vpd.id,
+-			   (uint16_t)sizeof(hw->vpd.id));
++			   sizeof(hw->vpd.id));
+ 	numattrs++;
+ 	csio_append_attrib(&pld, FC_FDMI_HBA_ATTR_MODELDESCRIPTION,
+-			   hw->model_desc, (uint16_t)strlen(hw->model_desc));
++			   hw->model_desc, strlen(hw->model_desc));
+ 	numattrs++;
+ 	csio_append_attrib(&pld, FC_FDMI_HBA_ATTR_HARDWAREVERSION,
+-			   hw->hw_ver, (uint16_t)sizeof(hw->hw_ver));
++			   hw->hw_ver, sizeof(hw->hw_ver));
+ 	numattrs++;
+ 	csio_append_attrib(&pld, FC_FDMI_HBA_ATTR_FIRMWAREVERSION,
+-			   hw->fwrev_str, (uint16_t)strlen(hw->fwrev_str));
++			   hw->fwrev_str, strlen(hw->fwrev_str));
+ 	numattrs++;
+ 
+ 	if (!csio_osname(buf, sizeof(buf))) {
+ 		csio_append_attrib(&pld, FC_FDMI_HBA_ATTR_OSNAMEVERSION,
+-				   buf, (uint16_t)strlen(buf));
++				   buf, strlen(buf));
+ 		numattrs++;
+ 	}
+ 
+ 	csio_append_attrib(&pld, FC_FDMI_HBA_ATTR_MAXCTPAYLOAD,
+-			   (uint8_t *)&maxpayload,
+-			   FC_FDMI_HBA_ATTR_MAXCTPAYLOAD_LEN);
++			   &maxpayload, FC_FDMI_HBA_ATTR_MAXCTPAYLOAD_LEN);
+ 	len = (uint32_t)(pld - (uint8_t *)cmd);
+ 	numattrs++;
+ 	attrib_blk->numattrs = htonl(numattrs);
+@@ -1794,6 +1801,8 @@ csio_ln_mgmt_submit_req(struct csio_ioreq *io_req,
+ 	struct csio_mgmtm *mgmtm = csio_hw_to_mgmtm(hw);
+ 	int rv;
+ 
++	BUG_ON(pld_len > pld->len);
++
+ 	io_req->io_cbfn = io_cbfn;	/* Upper layer callback handler */
+ 	io_req->fw_handle = (uintptr_t) (io_req);
+ 	io_req->eq_idx = mgmtm->eq_idx;
 diff --git a/drivers/scsi/qedf/qedf_main.c b/drivers/scsi/qedf/qedf_main.c
 index cceddd995a4b..a5c97342fd5d 100644
 --- a/drivers/scsi/qedf/qedf_main.c
@@ -1856,6 +2584,19 @@ index 65145a3df065..7a44a665045c 100644
  	return 0;
  err:
  	up_write(&mm->mmap_sem);
+diff --git a/fs/hugetlbfs/inode.c b/fs/hugetlbfs/inode.c
+index dde861387a40..d44f5456eb9b 100644
+--- a/fs/hugetlbfs/inode.c
++++ b/fs/hugetlbfs/inode.c
+@@ -200,7 +200,7 @@ hugetlb_get_unmapped_area(struct file *file, unsigned long addr,
+ 		addr = ALIGN(addr, huge_page_size(h));
+ 		vma = find_vma(mm, addr);
+ 		if (TASK_SIZE - len >= addr &&
+-		    (!vma || addr + len <= vma->vm_start))
++		    (!vma || addr + len <= vm_start_gap(vma)))
+ 			return addr;
+ 	}
+ 
 diff --git a/fs/namei.c b/fs/namei.c
 index 19dcf62133cc..2e203bd65d94 100644
 --- a/fs/namei.c
@@ -1905,6 +2646,22 @@ index 1ade1206bb89..60b0f76dec47 100644
          help
          Exports the dump image of crashed kernel in ELF format.
  
+diff --git a/fs/proc/task_mmu.c b/fs/proc/task_mmu.c
+index 312578089544..f4016826255a 100644
+--- a/fs/proc/task_mmu.c
++++ b/fs/proc/task_mmu.c
+@@ -300,11 +300,7 @@ show_map_vma(struct seq_file *m, struct vm_area_struct *vma, int is_pid)
+ 
+ 	/* We don't show the stack guard page in /proc/maps */
+ 	start = vma->vm_start;
+-	if (stack_guard_page_start(vma, start))
+-		start += PAGE_SIZE;
+ 	end = vma->vm_end;
+-	if (stack_guard_page_end(vma, end))
+-		end -= PAGE_SIZE;
+ 
+ 	seq_setwidth(m, 25 + sizeof(void *) * 6 - 1);
+ 	seq_printf(m, "%08lx-%08lx %c%c%c%c %08llx %02x:%02x %lu ",
 diff --git a/fs/stat.c b/fs/stat.c
 index ea6235a31ec8..c2f1b8d4a029 100644
 --- a/fs/stat.c
@@ -2107,6 +2864,91 @@ index f4156f88f557..82a2c225eae3 100644
  
  	if (refcount_dec_and_lock(&kref->refcount, lock)) {
  		release(kref);
+diff --git a/include/linux/mm.h b/include/linux/mm.h
+index 018b134f6427..cec423ba6d4b 100644
+--- a/include/linux/mm.h
++++ b/include/linux/mm.h
+@@ -1381,12 +1381,6 @@ int clear_page_dirty_for_io(struct page *page);
+ 
+ int get_cmdline(struct task_struct *task, char *buffer, int buflen);
+ 
+-/* Is the vma a continuation of the stack vma above it? */
+-static inline int vma_growsdown(struct vm_area_struct *vma, unsigned long addr)
+-{
+-	return vma && (vma->vm_end == addr) && (vma->vm_flags & VM_GROWSDOWN);
+-}
+-
+ static inline bool vma_is_anonymous(struct vm_area_struct *vma)
+ {
+ 	return !vma->vm_ops;
+@@ -1402,28 +1396,6 @@ bool vma_is_shmem(struct vm_area_struct *vma);
+ static inline bool vma_is_shmem(struct vm_area_struct *vma) { return false; }
+ #endif
+ 
+-static inline int stack_guard_page_start(struct vm_area_struct *vma,
+-					     unsigned long addr)
+-{
+-	return (vma->vm_flags & VM_GROWSDOWN) &&
+-		(vma->vm_start == addr) &&
+-		!vma_growsdown(vma->vm_prev, addr);
+-}
+-
+-/* Is the vma a continuation of the stack vma below it? */
+-static inline int vma_growsup(struct vm_area_struct *vma, unsigned long addr)
+-{
+-	return vma && (vma->vm_start == addr) && (vma->vm_flags & VM_GROWSUP);
+-}
+-
+-static inline int stack_guard_page_end(struct vm_area_struct *vma,
+-					   unsigned long addr)
+-{
+-	return (vma->vm_flags & VM_GROWSUP) &&
+-		(vma->vm_end == addr) &&
+-		!vma_growsup(vma->vm_next, addr);
+-}
+-
+ int vma_is_stack_for_current(struct vm_area_struct *vma);
+ 
+ extern unsigned long move_page_tables(struct vm_area_struct *vma,
+@@ -2210,6 +2182,7 @@ void page_cache_async_readahead(struct address_space *mapping,
+ 				pgoff_t offset,
+ 				unsigned long size);
+ 
++extern unsigned long stack_guard_gap;
+ /* Generic expand stack which grows the stack according to GROWS{UP,DOWN} */
+ extern int expand_stack(struct vm_area_struct *vma, unsigned long address);
+ 
+@@ -2238,6 +2211,30 @@ static inline struct vm_area_struct * find_vma_intersection(struct mm_struct * m
+ 	return vma;
+ }
+ 
++static inline unsigned long vm_start_gap(struct vm_area_struct *vma)
++{
++	unsigned long vm_start = vma->vm_start;
++
++	if (vma->vm_flags & VM_GROWSDOWN) {
++		vm_start -= stack_guard_gap;
++		if (vm_start > vma->vm_start)
++			vm_start = 0;
++	}
++	return vm_start;
++}
++
++static inline unsigned long vm_end_gap(struct vm_area_struct *vma)
++{
++	unsigned long vm_end = vma->vm_end;
++
++	if (vma->vm_flags & VM_GROWSUP) {
++		vm_end += stack_guard_gap;
++		if (vm_end < vma->vm_end)
++			vm_end = -PAGE_SIZE;
++	}
++	return vm_end;
++}
++
+ static inline unsigned long vma_pages(struct vm_area_struct *vma)
+ {
+ 	return (vma->vm_end - vma->vm_start) >> PAGE_SHIFT;
 diff --git a/include/linux/percpu.h b/include/linux/percpu.h
 index 56939d3f6e53..cbd850eb4e2e 100644
 --- a/include/linux/percpu.h
@@ -2219,7 +3061,7 @@ index 07ef550c6627..e42aafcbe2f6 100644
  	/*
  	 * Defragmentation by allocating from a remote node.
 diff --git a/include/linux/string.h b/include/linux/string.h
-index 26b6f6a66f83..3b4db2c9a136 100644
+index 26b6f6a66f83..227e20e9bd3f 100644
 --- a/include/linux/string.h
 +++ b/include/linux/string.h
 @@ -169,4 +169,210 @@ static inline const char *kbasename(const char *path)
@@ -2289,7 +3131,7 @@ index 26b6f6a66f83..3b4db2c9a136 100644
 +{
 +	size_t p_size = __string_size(p);
 +	__kernel_size_t ret = __real_strnlen(p, maxlen < p_size ? maxlen : p_size);
-+	if (p_size <= ret)
++	if (p_size <= ret && maxlen != ret)
 +		fortify_panic(__func__);
 +	return ret;
 +}
@@ -3003,8 +3845,80 @@ index 9b8fccb969dc..dde813f1a01e 100644
          help
  	  This is the portion of low virtual memory which should be protected
  	  from userspace allocation.  Keeping a user from writing to low pages
+diff --git a/mm/gup.c b/mm/gup.c
+index fb87cbf37e52..1466f3545870 100644
+--- a/mm/gup.c
++++ b/mm/gup.c
+@@ -387,11 +387,6 @@ static int faultin_page(struct task_struct *tsk, struct vm_area_struct *vma,
+ 	/* mlock all present pages, but do not fault in new pages */
+ 	if ((*flags & (FOLL_POPULATE | FOLL_MLOCK)) == FOLL_MLOCK)
+ 		return -ENOENT;
+-	/* For mm_populate(), just skip the stack guard page. */
+-	if ((*flags & FOLL_POPULATE) &&
+-			(stack_guard_page_start(vma, address) ||
+-			 stack_guard_page_end(vma, address + PAGE_SIZE)))
+-		return -ENOENT;
+ 	if (*flags & FOLL_WRITE)
+ 		fault_flags |= FAULT_FLAG_WRITE;
+ 	if (*flags & FOLL_REMOTE)
+diff --git a/mm/memory.c b/mm/memory.c
+index 2437dc08ab36..44a4dfc31682 100644
+--- a/mm/memory.c
++++ b/mm/memory.c
+@@ -2855,40 +2855,6 @@ int do_swap_page(struct vm_fault *vmf)
+ }
+ 
+ /*
+- * This is like a special single-page "expand_{down|up}wards()",
+- * except we must first make sure that 'address{-|+}PAGE_SIZE'
+- * doesn't hit another vma.
+- */
+-static inline int check_stack_guard_page(struct vm_area_struct *vma, unsigned long address)
+-{
+-	address &= PAGE_MASK;
+-	if ((vma->vm_flags & VM_GROWSDOWN) && address == vma->vm_start) {
+-		struct vm_area_struct *prev = vma->vm_prev;
+-
+-		/*
+-		 * Is there a mapping abutting this one below?
+-		 *
+-		 * That's only ok if it's the same stack mapping
+-		 * that has gotten split..
+-		 */
+-		if (prev && prev->vm_end == address)
+-			return prev->vm_flags & VM_GROWSDOWN ? 0 : -ENOMEM;
+-
+-		return expand_downwards(vma, address - PAGE_SIZE);
+-	}
+-	if ((vma->vm_flags & VM_GROWSUP) && address + PAGE_SIZE == vma->vm_end) {
+-		struct vm_area_struct *next = vma->vm_next;
+-
+-		/* As VM_GROWSDOWN but s/below/above/ */
+-		if (next && next->vm_start == address + PAGE_SIZE)
+-			return next->vm_flags & VM_GROWSUP ? 0 : -ENOMEM;
+-
+-		return expand_upwards(vma, address + PAGE_SIZE);
+-	}
+-	return 0;
+-}
+-
+-/*
+  * We enter with non-exclusive mmap_sem (to exclude vma changes,
+  * but allow concurrent faults), and pte mapped but not yet locked.
+  * We return with mmap_sem still held, but pte unmapped and unlocked.
+@@ -2904,10 +2870,6 @@ static int do_anonymous_page(struct vm_fault *vmf)
+ 	if (vma->vm_flags & VM_SHARED)
+ 		return VM_FAULT_SIGBUS;
+ 
+-	/* Check if we need to add a guard page to the stack */
+-	if (check_stack_guard_page(vma, vmf->address) < 0)
+-		return VM_FAULT_SIGSEGV;
+-
+ 	/*
+ 	 * Use pte_alloc() instead of pte_alloc_map().  We can't run
+ 	 * pte_offset_map() on pmds where a huge pmd might be created
 diff --git a/mm/mmap.c b/mm/mmap.c
-index bfbe8856d134..c5675da291a0 100644
+index bfbe8856d134..6788ff760c00 100644
 --- a/mm/mmap.c
 +++ b/mm/mmap.c
 @@ -94,7 +94,7 @@ static void unmap_region(struct mm_struct *mm,
@@ -3016,7 +3930,15 @@ index bfbe8856d134..c5675da291a0 100644
  	__P000, __P001, __P010, __P011, __P100, __P101, __P110, __P111,
  	__S000, __S001, __S010, __S011, __S100, __S101, __S110, __S111
  };
-@@ -218,6 +218,13 @@ SYSCALL_DEFINE1(brk, unsigned long, brk)
+@@ -183,6 +183,7 @@ SYSCALL_DEFINE1(brk, unsigned long, brk)
+ 	unsigned long retval;
+ 	unsigned long newbrk, oldbrk;
+ 	struct mm_struct *mm = current->mm;
++	struct vm_area_struct *next;
+ 	unsigned long min_brk;
+ 	bool populate;
+ 	LIST_HEAD(uf);
+@@ -218,6 +219,13 @@ SYSCALL_DEFINE1(brk, unsigned long, brk)
  
  	newbrk = PAGE_ALIGN(brk);
  	oldbrk = PAGE_ALIGN(mm->brk);
@@ -3030,6 +3952,343 @@ index bfbe8856d134..c5675da291a0 100644
  	if (oldbrk == newbrk)
  		goto set_brk;
  
+@@ -229,7 +237,8 @@ SYSCALL_DEFINE1(brk, unsigned long, brk)
+ 	}
+ 
+ 	/* Check against existing mmap mappings. */
+-	if (find_vma_intersection(mm, oldbrk, newbrk+PAGE_SIZE))
++	next = find_vma(mm, oldbrk);
++	if (next && newbrk + PAGE_SIZE > vm_start_gap(next))
+ 		goto out;
+ 
+ 	/* Ok, looks good - let it rip. */
+@@ -253,10 +262,22 @@ SYSCALL_DEFINE1(brk, unsigned long, brk)
+ 
+ static long vma_compute_subtree_gap(struct vm_area_struct *vma)
+ {
+-	unsigned long max, subtree_gap;
+-	max = vma->vm_start;
+-	if (vma->vm_prev)
+-		max -= vma->vm_prev->vm_end;
++	unsigned long max, prev_end, subtree_gap;
++
++	/*
++	 * Note: in the rare case of a VM_GROWSDOWN above a VM_GROWSUP, we
++	 * allow two stack_guard_gaps between them here, and when choosing
++	 * an unmapped area; whereas when expanding we only require one.
++	 * That's a little inconsistent, but keeps the code here simpler.
++	 */
++	max = vm_start_gap(vma);
++	if (vma->vm_prev) {
++		prev_end = vm_end_gap(vma->vm_prev);
++		if (max > prev_end)
++			max -= prev_end;
++		else
++			max = 0;
++	}
+ 	if (vma->vm_rb.rb_left) {
+ 		subtree_gap = rb_entry(vma->vm_rb.rb_left,
+ 				struct vm_area_struct, vm_rb)->rb_subtree_gap;
+@@ -352,7 +373,7 @@ static void validate_mm(struct mm_struct *mm)
+ 			anon_vma_unlock_read(anon_vma);
+ 		}
+ 
+-		highest_address = vma->vm_end;
++		highest_address = vm_end_gap(vma);
+ 		vma = vma->vm_next;
+ 		i++;
+ 	}
+@@ -541,7 +562,7 @@ void __vma_link_rb(struct mm_struct *mm, struct vm_area_struct *vma,
+ 	if (vma->vm_next)
+ 		vma_gap_update(vma->vm_next);
+ 	else
+-		mm->highest_vm_end = vma->vm_end;
++		mm->highest_vm_end = vm_end_gap(vma);
+ 
+ 	/*
+ 	 * vma->vm_prev wasn't known when we followed the rbtree to find the
+@@ -856,7 +877,7 @@ int __vma_adjust(struct vm_area_struct *vma, unsigned long start,
+ 			vma_gap_update(vma);
+ 		if (end_changed) {
+ 			if (!next)
+-				mm->highest_vm_end = end;
++				mm->highest_vm_end = vm_end_gap(vma);
+ 			else if (!adjust_next)
+ 				vma_gap_update(next);
+ 		}
+@@ -941,7 +962,7 @@ int __vma_adjust(struct vm_area_struct *vma, unsigned long start,
+ 			 * mm->highest_vm_end doesn't need any update
+ 			 * in remove_next == 1 case.
+ 			 */
+-			VM_WARN_ON(mm->highest_vm_end != end);
++			VM_WARN_ON(mm->highest_vm_end != vm_end_gap(vma));
+ 		}
+ 	}
+ 	if (insert && file)
+@@ -1787,7 +1808,7 @@ unsigned long unmapped_area(struct vm_unmapped_area_info *info)
+ 
+ 	while (true) {
+ 		/* Visit left subtree if it looks promising */
+-		gap_end = vma->vm_start;
++		gap_end = vm_start_gap(vma);
+ 		if (gap_end >= low_limit && vma->vm_rb.rb_left) {
+ 			struct vm_area_struct *left =
+ 				rb_entry(vma->vm_rb.rb_left,
+@@ -1798,7 +1819,7 @@ unsigned long unmapped_area(struct vm_unmapped_area_info *info)
+ 			}
+ 		}
+ 
+-		gap_start = vma->vm_prev ? vma->vm_prev->vm_end : 0;
++		gap_start = vma->vm_prev ? vm_end_gap(vma->vm_prev) : 0;
+ check_current:
+ 		/* Check if current node has a suitable gap */
+ 		if (gap_start > high_limit)
+@@ -1825,8 +1846,8 @@ unsigned long unmapped_area(struct vm_unmapped_area_info *info)
+ 			vma = rb_entry(rb_parent(prev),
+ 				       struct vm_area_struct, vm_rb);
+ 			if (prev == vma->vm_rb.rb_left) {
+-				gap_start = vma->vm_prev->vm_end;
+-				gap_end = vma->vm_start;
++				gap_start = vm_end_gap(vma->vm_prev);
++				gap_end = vm_start_gap(vma);
+ 				goto check_current;
+ 			}
+ 		}
+@@ -1890,7 +1911,7 @@ unsigned long unmapped_area_topdown(struct vm_unmapped_area_info *info)
+ 
+ 	while (true) {
+ 		/* Visit right subtree if it looks promising */
+-		gap_start = vma->vm_prev ? vma->vm_prev->vm_end : 0;
++		gap_start = vma->vm_prev ? vm_end_gap(vma->vm_prev) : 0;
+ 		if (gap_start <= high_limit && vma->vm_rb.rb_right) {
+ 			struct vm_area_struct *right =
+ 				rb_entry(vma->vm_rb.rb_right,
+@@ -1903,7 +1924,7 @@ unsigned long unmapped_area_topdown(struct vm_unmapped_area_info *info)
+ 
+ check_current:
+ 		/* Check if current node has a suitable gap */
+-		gap_end = vma->vm_start;
++		gap_end = vm_start_gap(vma);
+ 		if (gap_end < low_limit)
+ 			return -ENOMEM;
+ 		if (gap_start <= high_limit && gap_end - gap_start >= length)
+@@ -1929,7 +1950,7 @@ unsigned long unmapped_area_topdown(struct vm_unmapped_area_info *info)
+ 				       struct vm_area_struct, vm_rb);
+ 			if (prev == vma->vm_rb.rb_right) {
+ 				gap_start = vma->vm_prev ?
+-					vma->vm_prev->vm_end : 0;
++					vm_end_gap(vma->vm_prev) : 0;
+ 				goto check_current;
+ 			}
+ 		}
+@@ -1967,7 +1988,7 @@ arch_get_unmapped_area(struct file *filp, unsigned long addr,
+ 		unsigned long len, unsigned long pgoff, unsigned long flags)
+ {
+ 	struct mm_struct *mm = current->mm;
+-	struct vm_area_struct *vma;
++	struct vm_area_struct *vma, *prev;
+ 	struct vm_unmapped_area_info info;
+ 
+ 	if (len > TASK_SIZE - mmap_min_addr)
+@@ -1978,9 +1999,10 @@ arch_get_unmapped_area(struct file *filp, unsigned long addr,
+ 
+ 	if (addr) {
+ 		addr = PAGE_ALIGN(addr);
+-		vma = find_vma(mm, addr);
++		vma = find_vma_prev(mm, addr, &prev);
+ 		if (TASK_SIZE - len >= addr && addr >= mmap_min_addr &&
+-		    (!vma || addr + len <= vma->vm_start))
++		    (!vma || addr + len <= vm_start_gap(vma)) &&
++		    (!prev || addr >= vm_end_gap(prev)))
+ 			return addr;
+ 	}
+ 
+@@ -2003,7 +2025,7 @@ arch_get_unmapped_area_topdown(struct file *filp, const unsigned long addr0,
+ 			  const unsigned long len, const unsigned long pgoff,
+ 			  const unsigned long flags)
+ {
+-	struct vm_area_struct *vma;
++	struct vm_area_struct *vma, *prev;
+ 	struct mm_struct *mm = current->mm;
+ 	unsigned long addr = addr0;
+ 	struct vm_unmapped_area_info info;
+@@ -2018,9 +2040,10 @@ arch_get_unmapped_area_topdown(struct file *filp, const unsigned long addr0,
+ 	/* requesting a specific address */
+ 	if (addr) {
+ 		addr = PAGE_ALIGN(addr);
+-		vma = find_vma(mm, addr);
++		vma = find_vma_prev(mm, addr, &prev);
+ 		if (TASK_SIZE - len >= addr && addr >= mmap_min_addr &&
+-				(!vma || addr + len <= vma->vm_start))
++				(!vma || addr + len <= vm_start_gap(vma)) &&
++				(!prev || addr >= vm_end_gap(prev)))
+ 			return addr;
+ 	}
+ 
+@@ -2155,21 +2178,19 @@ find_vma_prev(struct mm_struct *mm, unsigned long addr,
+  * update accounting. This is shared with both the
+  * grow-up and grow-down cases.
+  */
+-static int acct_stack_growth(struct vm_area_struct *vma, unsigned long size, unsigned long grow)
++static int acct_stack_growth(struct vm_area_struct *vma,
++			     unsigned long size, unsigned long grow)
+ {
+ 	struct mm_struct *mm = vma->vm_mm;
+ 	struct rlimit *rlim = current->signal->rlim;
+-	unsigned long new_start, actual_size;
++	unsigned long new_start;
+ 
+ 	/* address space limit tests */
+ 	if (!may_expand_vm(mm, vma->vm_flags, grow))
+ 		return -ENOMEM;
+ 
+ 	/* Stack limit test */
+-	actual_size = size;
+-	if (size && (vma->vm_flags & (VM_GROWSUP | VM_GROWSDOWN)))
+-		actual_size -= PAGE_SIZE;
+-	if (actual_size > READ_ONCE(rlim[RLIMIT_STACK].rlim_cur))
++	if (size > READ_ONCE(rlim[RLIMIT_STACK].rlim_cur))
+ 		return -ENOMEM;
+ 
+ 	/* mlock limit tests */
+@@ -2207,16 +2228,29 @@ static int acct_stack_growth(struct vm_area_struct *vma, unsigned long size, uns
+ int expand_upwards(struct vm_area_struct *vma, unsigned long address)
+ {
+ 	struct mm_struct *mm = vma->vm_mm;
++	struct vm_area_struct *next;
++	unsigned long gap_addr;
+ 	int error = 0;
+ 
+ 	if (!(vma->vm_flags & VM_GROWSUP))
+ 		return -EFAULT;
+ 
+ 	/* Guard against wrapping around to address 0. */
+-	if (address < PAGE_ALIGN(address+4))
+-		address = PAGE_ALIGN(address+4);
+-	else
++	address &= PAGE_MASK;
++	address += PAGE_SIZE;
++	if (!address)
++		return -ENOMEM;
++
++	/* Enforce stack_guard_gap */
++	gap_addr = address + stack_guard_gap;
++	if (gap_addr < address)
+ 		return -ENOMEM;
++	next = vma->vm_next;
++	if (next && next->vm_start < gap_addr) {
++		if (!(next->vm_flags & VM_GROWSUP))
++			return -ENOMEM;
++		/* Check that both stack segments have the same anon_vma? */
++	}
+ 
+ 	/* We must make sure the anon_vma is allocated. */
+ 	if (unlikely(anon_vma_prepare(vma)))
+@@ -2261,7 +2295,7 @@ int expand_upwards(struct vm_area_struct *vma, unsigned long address)
+ 				if (vma->vm_next)
+ 					vma_gap_update(vma->vm_next);
+ 				else
+-					mm->highest_vm_end = address;
++					mm->highest_vm_end = vm_end_gap(vma);
+ 				spin_unlock(&mm->page_table_lock);
+ 
+ 				perf_event_mmap(vma);
+@@ -2282,6 +2316,8 @@ int expand_downwards(struct vm_area_struct *vma,
+ 				   unsigned long address)
+ {
+ 	struct mm_struct *mm = vma->vm_mm;
++	struct vm_area_struct *prev;
++	unsigned long gap_addr;
+ 	int error;
+ 
+ 	address &= PAGE_MASK;
+@@ -2289,6 +2325,17 @@ int expand_downwards(struct vm_area_struct *vma,
+ 	if (error)
+ 		return error;
+ 
++	/* Enforce stack_guard_gap */
++	gap_addr = address - stack_guard_gap;
++	if (gap_addr > address)
++		return -ENOMEM;
++	prev = vma->vm_prev;
++	if (prev && prev->vm_end > gap_addr) {
++		if (!(prev->vm_flags & VM_GROWSDOWN))
++			return -ENOMEM;
++		/* Check that both stack segments have the same anon_vma? */
++	}
++
+ 	/* We must make sure the anon_vma is allocated. */
+ 	if (unlikely(anon_vma_prepare(vma)))
+ 		return -ENOMEM;
+@@ -2343,28 +2390,25 @@ int expand_downwards(struct vm_area_struct *vma,
+ 	return error;
+ }
+ 
+-/*
+- * Note how expand_stack() refuses to expand the stack all the way to
+- * abut the next virtual mapping, *unless* that mapping itself is also
+- * a stack mapping. We want to leave room for a guard page, after all
+- * (the guard page itself is not added here, that is done by the
+- * actual page faulting logic)
+- *
+- * This matches the behavior of the guard page logic (see mm/memory.c:
+- * check_stack_guard_page()), which only allows the guard page to be
+- * removed under these circumstances.
+- */
++/* enforced gap between the expanding stack and other mappings. */
++unsigned long stack_guard_gap = 256UL<<PAGE_SHIFT;
++
++static int __init cmdline_parse_stack_guard_gap(char *p)
++{
++	unsigned long val;
++	char *endptr;
++
++	val = simple_strtoul(p, &endptr, 10);
++	if (!*endptr)
++		stack_guard_gap = val << PAGE_SHIFT;
++
++	return 0;
++}
++__setup("stack_guard_gap=", cmdline_parse_stack_guard_gap);
++
+ #ifdef CONFIG_STACK_GROWSUP
+ int expand_stack(struct vm_area_struct *vma, unsigned long address)
+ {
+-	struct vm_area_struct *next;
+-
+-	address &= PAGE_MASK;
+-	next = vma->vm_next;
+-	if (next && next->vm_start == address + PAGE_SIZE) {
+-		if (!(next->vm_flags & VM_GROWSUP))
+-			return -ENOMEM;
+-	}
+ 	return expand_upwards(vma, address);
+ }
+ 
+@@ -2386,14 +2430,6 @@ find_extend_vma(struct mm_struct *mm, unsigned long addr)
+ #else
+ int expand_stack(struct vm_area_struct *vma, unsigned long address)
+ {
+-	struct vm_area_struct *prev;
+-
+-	address &= PAGE_MASK;
+-	prev = vma->vm_prev;
+-	if (prev && prev->vm_end == address) {
+-		if (!(prev->vm_flags & VM_GROWSDOWN))
+-			return -ENOMEM;
+-	}
+ 	return expand_downwards(vma, address);
+ }
+ 
+@@ -2491,7 +2527,7 @@ detach_vmas_to_be_unmapped(struct mm_struct *mm, struct vm_area_struct *vma,
+ 		vma->vm_prev = prev;
+ 		vma_gap_update(vma);
+ 	} else
+-		mm->highest_vm_end = prev ? prev->vm_end : 0;
++		mm->highest_vm_end = prev ? vm_end_gap(prev) : 0;
+ 	tail_vma->vm_next = NULL;
+ 
+ 	/* Kill the cache */
 diff --git a/mm/page_alloc.c b/mm/page_alloc.c
 index a2019fc9d94d..54767969a640 100644
 --- a/mm/page_alloc.c
@@ -3279,7 +4538,7 @@ index 09d0e849b07f..46c4083e1014 100644
  	4,	/* 16 */
  	5,	/* 24 */
 diff --git a/mm/slub.c b/mm/slub.c
-index e3863a22e10d..66f9c4ae4ee7 100644
+index e3863a22e10d..e0cefe127a46 100644
 --- a/mm/slub.c
 +++ b/mm/slub.c
 @@ -34,6 +34,7 @@
@@ -3307,7 +4566,7 @@ index e3863a22e10d..66f9c4ae4ee7 100644
  void *fixup_red_left(struct kmem_cache *s, void *p)
  {
  	if (kmem_cache_debug(s) && s->flags & SLAB_RED_ZONE)
-@@ -240,30 +251,93 @@ static inline void stat(const struct kmem_cache *s, enum stat_item si)
+@@ -240,29 +251,92 @@ static inline void stat(const struct kmem_cache *s, enum stat_item si)
  
  static inline void *get_freepointer(struct kmem_cache *s, void *object)
  {
@@ -3358,8 +4617,8 @@ index e3863a22e10d..66f9c4ae4ee7 100644
 +#else
  	*(void **)(object + s->offset) = fp;
 +#endif
- }
- 
++}
++
 +#ifdef CONFIG_SLAB_CANARY
 +static inline unsigned long *get_canary(struct kmem_cache *s, void *object)
 +{
@@ -3392,15 +4651,14 @@ index e3863a22e10d..66f9c4ae4ee7 100644
 +{
 +	unsigned long *canary = get_canary(s, object);
 +	BUG_ON(*canary != get_canary_value(canary, value));
-+}
+ }
 +#else
-+	#define set_canary(s, object, value)
-+	#define check_canary(s, object, value)
++#define set_canary(s, object, value)
++#define check_canary(s, object, value)
 +#endif
-+
+ 
  /* Loop over all objects in a slab */
  #define for_each_object(__p, __s, __addr, __objects) \
- 	for (__p = fixup_red_left(__s, __addr); \
 @@ -451,13 +525,13 @@ static inline void *restore_red_left(struct kmem_cache *s, void *p)
   * Debug settings:
   */
@@ -3449,20 +4707,18 @@ index e3863a22e10d..66f9c4ae4ee7 100644
  	if (s->flags & SLAB_STORE_USER)
  		/* We also have user information there */
  		off += 2 * sizeof(struct track);
-@@ -1385,8 +1468,11 @@ static void setup_object(struct kmem_cache *s, struct page *page,
+@@ -1385,8 +1468,9 @@ static void setup_object(struct kmem_cache *s, struct page *page,
  				void *object)
  {
  	setup_object_debug(s, page, object);
-+#ifdef CONFIG_SLAB_CANARY
 +	set_canary(s, object, s->random_inactive);
-+#endif
  	kasan_init_slab_obj(s, object);
 -	if (unlikely(s->ctor)) {
 +	if (unlikely(s->ctor) && !has_sanitize_verify(s)) {
  		kasan_unpoison_object_data(s, object);
  		s->ctor(object);
  		kasan_poison_object_data(s, object);
-@@ -2712,9 +2798,21 @@ static __always_inline void *slab_alloc_node(struct kmem_cache *s,
+@@ -2712,9 +2796,21 @@ static __always_inline void *slab_alloc_node(struct kmem_cache *s,
  		stat(s, ALLOC_FASTPATH);
  	}
  
@@ -3485,7 +4741,7 @@ index e3863a22e10d..66f9c4ae4ee7 100644
  	slab_post_alloc_hook(s, gfpflags, 1, &object);
  
  	return object;
-@@ -2921,6 +3019,27 @@ static __always_inline void do_slab_free(struct kmem_cache *s,
+@@ -2921,6 +3017,27 @@ static __always_inline void do_slab_free(struct kmem_cache *s,
  	void *tail_obj = tail ? : head;
  	struct kmem_cache_cpu *c;
  	unsigned long tid;
@@ -3513,7 +4769,7 @@ index e3863a22e10d..66f9c4ae4ee7 100644
  redo:
  	/*
  	 * Determine the currently cpus per cpu slab.
-@@ -3099,7 +3218,7 @@ int kmem_cache_alloc_bulk(struct kmem_cache *s, gfp_t flags, size_t size,
+@@ -3099,7 +3216,7 @@ int kmem_cache_alloc_bulk(struct kmem_cache *s, gfp_t flags, size_t size,
  			  void **p)
  {
  	struct kmem_cache_cpu *c;
@@ -3522,7 +4778,7 @@ index e3863a22e10d..66f9c4ae4ee7 100644
  
  	/* memcg and kmem_cache debug support */
  	s = slab_pre_alloc_hook(s, flags);
-@@ -3136,13 +3255,29 @@ int kmem_cache_alloc_bulk(struct kmem_cache *s, gfp_t flags, size_t size,
+@@ -3136,13 +3253,29 @@ int kmem_cache_alloc_bulk(struct kmem_cache *s, gfp_t flags, size_t size,
  	local_irq_enable();
  
  	/* Clear memory outside IRQ disabled fastpath loop */
@@ -3553,7 +4809,7 @@ index e3863a22e10d..66f9c4ae4ee7 100644
  	/* memcg and kmem_cache debug support */
  	slab_post_alloc_hook(s, flags, size, p);
  	return i;
-@@ -3174,9 +3309,9 @@ EXPORT_SYMBOL(kmem_cache_alloc_bulk);
+@@ -3174,9 +3307,9 @@ EXPORT_SYMBOL(kmem_cache_alloc_bulk);
   * and increases the number of allocations possible without having to
   * take the list_lock.
   */
@@ -3566,17 +4822,15 @@ index e3863a22e10d..66f9c4ae4ee7 100644
  
  /*
   * Calculate the order of allocation given an slab object size.
-@@ -3346,6 +3481,9 @@ static void early_kmem_cache_node_alloc(int node)
+@@ -3346,6 +3479,7 @@ static void early_kmem_cache_node_alloc(int node)
  	init_object(kmem_cache_node, n, SLUB_RED_ACTIVE);
  	init_tracking(kmem_cache_node, n);
  #endif
-+#ifdef CONFIG_SLAB_CANARY
 +	set_canary(kmem_cache_node, n, kmem_cache_node->random_active);
-+#endif
  	kasan_kmalloc(kmem_cache_node, n, sizeof(struct kmem_cache_node),
  		      GFP_KERNEL);
  	init_kmem_cache_node(n);
-@@ -3469,6 +3607,9 @@ static int calculate_sizes(struct kmem_cache *s, int forced_order)
+@@ -3469,6 +3603,9 @@ static int calculate_sizes(struct kmem_cache *s, int forced_order)
  		size += sizeof(void *);
  	}
  
@@ -3586,7 +4840,7 @@ index e3863a22e10d..66f9c4ae4ee7 100644
  #ifdef CONFIG_SLUB_DEBUG
  	if (flags & SLAB_STORE_USER)
  		/*
-@@ -3535,6 +3676,13 @@ static int calculate_sizes(struct kmem_cache *s, int forced_order)
+@@ -3535,6 +3672,13 @@ static int calculate_sizes(struct kmem_cache *s, int forced_order)
  static int kmem_cache_open(struct kmem_cache *s, unsigned long flags)
  {
  	s->flags = kmem_cache_flags(s->size, flags, s->name, s->ctor);
@@ -3600,7 +4854,7 @@ index e3863a22e10d..66f9c4ae4ee7 100644
  	s->reserved = 0;
  
  	if (need_reserve_slab_rcu && (s->flags & SLAB_DESTROY_BY_RCU))
-@@ -3826,6 +3974,8 @@ const char *__check_heap_object(const void *ptr, unsigned long n,
+@@ -3826,6 +3970,8 @@ const char *__check_heap_object(const void *ptr, unsigned long n,
  		offset -= s->red_left_pad;
  	}
  
@@ -3609,7 +4863,7 @@ index e3863a22e10d..66f9c4ae4ee7 100644
  	/* Allow address range falling entirely within object size. */
  	if (offset <= object_size && n <= object_size - offset)
  		return NULL;
-@@ -3844,7 +3994,11 @@ static size_t __ksize(const void *object)
+@@ -3844,7 +3990,11 @@ static size_t __ksize(const void *object)
  	page = virt_to_head_page(object);
  
  	if (unlikely(!PageSlab(page))) {
@@ -3621,7 +4875,7 @@ index e3863a22e10d..66f9c4ae4ee7 100644
  		return PAGE_SIZE << compound_order(page);
  	}
  
-@@ -4709,7 +4863,7 @@ enum slab_stat_type {
+@@ -4709,7 +4859,7 @@ enum slab_stat_type {
  #define SO_TOTAL	(1 << SL_TOTAL)
  
  #ifdef CONFIG_MEMCG
@@ -3763,7 +5017,7 @@ index e149f3ce5401..1a4ac530547f 100644
  		.ident = "Chrome Buddy",
  		.matches = {
 diff --git a/tools/objtool/builtin-check.c b/tools/objtool/builtin-check.c
-index 066086dd59a8..a2a44244d312 100644
+index 066086dd59a8..f1e07ded6b37 100644
 --- a/tools/objtool/builtin-check.c
 +++ b/tools/objtool/builtin-check.c
 @@ -193,7 +193,8 @@ static int __dead_end_function(struct objtool_file *file, struct symbol *func,
@@ -3772,7 +5026,7 @@ index 066086dd59a8..a2a44244d312 100644
  		"__reiserfs_panic",
 -		"lbug_with_loc"
 +		"lbug_with_loc",
-+		"fortify_panic"
++		"fortify_panic",
  	};
  
  	if (func->bind == STB_WEAK)
