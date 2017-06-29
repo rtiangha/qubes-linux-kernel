@@ -54,7 +54,7 @@ index bac23c198360..f7985cf7ebde 100644
  
  The value in this file affects behavior of handling NMI. When the
 diff --git a/Makefile b/Makefile
-index 1b0fe238d633..1fa8a53cf49d 100644
+index 8c5c94ca56d9..0d5c244e9c87 100644
 --- a/Makefile
 +++ b/Makefile
 @@ -675,6 +675,9 @@ ifneq ($(CONFIG_FRAME_WARN),0)
@@ -203,7 +203,7 @@ index 043d373b8369..a5ff9373901b 100644
 +		return mm->brk + get_random_long() % SZ_1G + PAGE_SIZE;
  }
 diff --git a/arch/arm64/kernel/vdso.c b/arch/arm64/kernel/vdso.c
-index 41b6e31f8f55..ae35f1855e06 100644
+index d0cb007fa482..ef3bdfd6be18 100644
 --- a/arch/arm64/kernel/vdso.c
 +++ b/arch/arm64/kernel/vdso.c
 @@ -37,7 +37,7 @@
@@ -2270,7 +2270,7 @@ index 84a110a719cb..96312c3afc07 100644
  		.ident = "Sahara Touch-iT",
  		.matches = {
 diff --git a/fs/exec.c b/fs/exec.c
-index 65145a3df065..7a44a665045c 100644
+index ce0901e65c40..438cc2cb45c8 100644
 --- a/fs/exec.c
 +++ b/fs/exec.c
 @@ -62,6 +62,7 @@
@@ -2281,7 +2281,7 @@ index 65145a3df065..7a44a665045c 100644
  
  #include <linux/uaccess.h>
  #include <asm/mmu_context.h>
-@@ -300,6 +301,8 @@ static int __bprm_mm_init(struct linux_binprm *bprm)
+@@ -320,6 +321,8 @@ static int __bprm_mm_init(struct linux_binprm *bprm)
  	arch_bprm_mm_init(mm, vma);
  	up_write(&mm->mmap_sem);
  	bprm->p = vma->vm_end - sizeof(void *);
@@ -2931,7 +2931,7 @@ index d68edffbf142..764d10707d87 100644
  extern void vfree(const void *addr);
  extern void vfree_atomic(const void *addr);
 diff --git a/init/Kconfig b/init/Kconfig
-index a92f27da4a27..d82996838a6a 100644
+index a92f27da4a27..32311101a248 100644
 --- a/init/Kconfig
 +++ b/init/Kconfig
 @@ -1783,7 +1783,7 @@ config VM_EVENT_COUNTERS
@@ -2951,7 +2951,7 @@ index a92f27da4a27..d82996838a6a 100644
  	help
  	  Randomizing heap placement makes heap exploits harder, but it
  	  also breaks ancient binaries (including anything libc5 based).
-@@ -1853,14 +1852,57 @@ config SLOB
+@@ -1853,14 +1852,56 @@ config SLOB
  endchoice
  
  config SLAB_FREELIST_RANDOM
@@ -3000,7 +3000,6 @@ index a92f27da4a27..d82996838a6a 100644
 +
 +config SLAB_SANITIZE_VERIFY
 +	depends on SLAB_SANITIZE && PAGE_SANITIZE
-+	depends on !HIBERNATION
 +	default y
 +	bool "Verify sanitized SLAB allocations"
 +	help
