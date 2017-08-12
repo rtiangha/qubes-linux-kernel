@@ -54,7 +54,7 @@ index bac23c198360..f7985cf7ebde 100644
  
  The value in this file affects behavior of handling NMI. When the
 diff --git a/Makefile b/Makefile
-index 8c5c94ca56d9..0d5c244e9c87 100644
+index 9db9095e0d7b..6887b11fdf5c 100644
 --- a/Makefile
 +++ b/Makefile
 @@ -675,6 +675,9 @@ ifneq ($(CONFIG_FRAME_WARN),0)
@@ -654,7 +654,7 @@ index 2e59dac07f9e..d732e608e3af 100644
  
  #endif /* BOOT_COMPRESSED_ERROR_H */
 diff --git a/arch/x86/boot/compressed/misc.c b/arch/x86/boot/compressed/misc.c
-index b3c5a5f030ce..43691238a21d 100644
+index c945acd8fa33..59559542f3b7 100644
 --- a/arch/x86/boot/compressed/misc.c
 +++ b/arch/x86/boot/compressed/misc.c
 @@ -409,3 +409,8 @@ asmlinkage __visible void *extract_kernel(void *rmode, memptr heap,
@@ -1093,7 +1093,7 @@ index 2b4b53e6793f..d532b4c3407b 100644
  	printk(KERN_INFO "Testing CPA: Reverting %lx-%lx\n",
  		start, start+size);
 diff --git a/arch/x86/mm/init_64.c b/arch/x86/mm/init_64.c
-index 15173d37f399..c2298a542fc4 100644
+index e1e3f7b4bdb0..447c9de99b87 100644
 --- a/arch/x86/mm/init_64.c
 +++ b/arch/x86/mm/init_64.c
 @@ -65,7 +65,7 @@
