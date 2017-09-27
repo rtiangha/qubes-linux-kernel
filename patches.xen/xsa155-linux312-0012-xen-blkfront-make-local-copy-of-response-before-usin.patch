@@ -1,14 +1,10 @@
-From ef0d243bfeaf1da8854c26f89536dc1b69c56602 Mon Sep 17 00:00:00 2001
-From: =?UTF-8?q?Marek=20Marczykowski-G=C3=B3recki?=
- <marmarek@invisiblethingslab.com>
-Date: Wed, 16 Dec 2015 05:51:10 +0100
-Subject: [PATCH 12/13] xen-blkfront: make local copy of response before using
- it
+From c60de332a832b55ecb09ed7e28df2679b9304b31 Mon Sep 17 00:00:00 2001
+From: fepitre <frederic.epitre@orange.fr>
+Date: Sun, 13 Aug 2017 13:21:18 +0200
+Subject: [PATCH] xen-blkfront: make local copy of response before using
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
-Organization: Invisible Things Lab
-Cc: Marek Marczykowski-Górecki <marmarek@invisiblethingslab.com>
 
 Data on the shared page can be changed at any time by the backend. Make
 a local copy, which is no longer controlled by the backend. And only
@@ -16,17 +12,18 @@ then access it.
 
 This is part of XSA155.
 
-CC: stable@vger.kernel.org
-Signed-off-by: Marek Marczykowski-Górecki <marmarek@invisiblethingslab.com>
+Source: Marek Marczykowski-Górecki <marmarek@invisiblethingslab.com>
+
+Signed-off-by: fepitre <frederic.epitre@orange.fr>
 ---
  drivers/block/xen-blkfront.c | 34 +++++++++++++++++-----------------
  1 file changed, 17 insertions(+), 17 deletions(-)
 
 diff --git a/drivers/block/xen-blkfront.c b/drivers/block/xen-blkfront.c
-index 2fee2ee..5d7eb04 100644
+index 3945963..b9efad6 100644
 --- a/drivers/block/xen-blkfront.c
 +++ b/drivers/block/xen-blkfront.c
-@@ -1296,7 +1296,7 @@ static void blkif_completion(struct blk_shadow *s, struct blkfront_info *info,
+@@ -1553,7 +1553,7 @@ static bool blkif_completion(unsigned long *id,
  static irqreturn_t blkif_interrupt(int irq, void *dev_id)
  {
  	struct request *req;
@@ -35,7 +32,7 @@ index 2fee2ee..5d7eb04 100644
  	RING_IDX i, rp;
  	unsigned long flags;
  	struct blkfront_ring_info *rinfo = (struct blkfront_ring_info *)dev_id;
-@@ -1316,8 +1316,8 @@ static irqreturn_t blkif_interrupt(int irq, void *dev_id)
+@@ -1570,8 +1570,8 @@ static irqreturn_t blkif_interrupt(int irq, void *dev_id)
  	for (i = rinfo->ring.rsp_cons; i != rp; i++) {
  		unsigned long id;
  
@@ -46,7 +43,7 @@ index 2fee2ee..5d7eb04 100644
  		/*
  		 * The backend has messed up and given us an id that we would
  		 * never have given to it (we stamp it up to BLK_RING_SIZE -
-@@ -1325,35 +1325,35 @@ static irqreturn_t blkif_interrupt(int irq, void *dev_id)
+@@ -1579,35 +1579,35 @@ static irqreturn_t blkif_interrupt(int irq, void *dev_id)
  		 */
  		if (id >= BLK_RING_SIZE(info)) {
  			WARN(1, "%s: response to %s has incorrect id (%ld)\n",
@@ -76,9 +73,9 @@ index 2fee2ee..5d7eb04 100644
  			continue;
  		}
  
--		error = (bret->status == BLKIF_RSP_OKAY) ? 0 : -EIO;
+-		blkif_req(req)->error = (bret->status == BLKIF_RSP_OKAY) ? 0 : -EIO;
 -		switch (bret->operation) {
-+		error = (bret.status == BLKIF_RSP_OKAY) ? 0 : -EIO;
++		blkif_req(req)->error = (bret.status == BLKIF_RSP_OKAY) ? 0 : -EIO;
 +		switch (bret.operation) {
  		case BLKIF_OP_DISCARD:
 -			if (unlikely(bret->status == BLKIF_RSP_EOPNOTSUPP)) {
@@ -87,10 +84,10 @@ index 2fee2ee..5d7eb04 100644
  				printk(KERN_WARNING "blkfront: %s: %s op failed\n",
 -					   info->gd->disk_name, op_name(bret->operation));
 +					   info->gd->disk_name, op_name(bret.operation));
- 				error = -EOPNOTSUPP;
+ 				blkif_req(req)->error = -EOPNOTSUPP;
  				info->feature_discard = 0;
  				info->feature_secdiscard = 0;
-@@ -1358,15 +1358,15 @@ static irqreturn_t blkif_interrupt(int irq, void *dev_id)
+@@ -1617,15 +1617,15 @@ static irqreturn_t blkif_interrupt(int irq, void *dev_id)
  			break;
  		case BLKIF_OP_FLUSH_DISKCACHE:
  		case BLKIF_OP_WRITE_BARRIER:
@@ -99,7 +96,7 @@ index 2fee2ee..5d7eb04 100644
  				printk(KERN_WARNING "blkfront: %s: %s op failed\n",
 -				       info->gd->disk_name, op_name(bret->operation));
 +				       info->gd->disk_name, op_name(bret.operation));
- 				error = -EOPNOTSUPP;
+ 				blkif_req(req)->error = -EOPNOTSUPP;
  			}
 -			if (unlikely(bret->status == BLKIF_RSP_ERROR &&
 +			if (unlikely(bret.status == BLKIF_RSP_ERROR &&
@@ -107,10 +104,10 @@ index 2fee2ee..5d7eb04 100644
  				printk(KERN_WARNING "blkfront: %s: empty %s op failed\n",
 -				       info->gd->disk_name, op_name(bret->operation));
 +				       info->gd->disk_name, op_name(bret.operation));
- 				error = -EOPNOTSUPP;
+ 				blkif_req(req)->error = -EOPNOTSUPP;
  			}
- 			if (unlikely(error)) {
-@@ -1378,9 +1378,9 @@ static irqreturn_t blkif_interrupt(int irq, void *dev_id)
+ 			if (unlikely(blkif_req(req)->error)) {
+@@ -1638,9 +1638,9 @@ static irqreturn_t blkif_interrupt(int irq, void *dev_id)
  			/* fall through */
  		case BLKIF_OP_READ:
  		case BLKIF_OP_WRITE:
@@ -120,8 +117,8 @@ index 2fee2ee..5d7eb04 100644
 -					"request: %x\n", bret->status);
 +					"request: %x\n", bret.status);
  
- 			blk_mq_complete_request(req, error);
  			break;
+ 		default:
 -- 
-2.1.0
+2.5.5
 
