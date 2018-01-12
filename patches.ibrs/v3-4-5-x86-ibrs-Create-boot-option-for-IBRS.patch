@@ -1,0 +1,117 @@
+From 9ed8053474924691a8645e89b2cf9e49966a43cd Mon Sep 17 00:00:00 2001
+From: Reg Tiangha <reg@reginaldtiangha.com>
+Date: Thu, 11 Jan 2018 18:24:42 -0700
+Subject: [PATCH] When "spectre_v2=ibrs" is set in kernel boot option, the
+ kernel will enable IBRS on entry to kernel and disable IBRS on kernel exit.
+
+The X86_FEATURE_SPEC_CTRL_IBRS will be set on the cpu
+if the user opt in to use IBRS against SPECTRE V2 attack.
+
+It is only for cases where the user require maximum level
+of security.
+
+Signed-off-by: Tim Chen <tim.c.chen@linux.intel.com>
+---
+---
+ arch/x86/include/asm/spec_ctrl.h | 23 +++++++++++++++++++++++
+ arch/x86/kernel/cpu/Makefile     |  1 +
+ arch/x86/kernel/cpu/scattered.c  |  2 ++
+ arch/x86/kernel/cpu/spec_ctrl.c  | 24 ++++++++++++++++++++++++
+ 4 files changed, 50 insertions(+)
+ create mode 100644 arch/x86/include/asm/spec_ctrl.h
+ create mode 100644 arch/x86/kernel/cpu/spec_ctrl.c
+
+diff --git a/arch/x86/include/asm/spec_ctrl.h b/arch/x86/include/asm/spec_ctrl.h
+new file mode 100644
+index 0000000..017eb4b
+--- /dev/null
++++ b/arch/x86/include/asm/spec_ctrl.h
+@@ -0,0 +1,23 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++
++#ifndef _ASM_X86_SPEC_CTRL_H
++#define _ASM_X86_SPEC_CTRL_H
++
++#include <asm/microcode.h>
++
++void spec_ctrl_scan_feature(struct cpuinfo_x86 *c);
++void spec_ctrl_unprotected_begin(void);
++void spec_ctrl_unprotected_end(void);
++
++static inline void __disable_indirect_speculation(void)
++{
++       native_wrmsrl(MSR_IA32_SPEC_CTRL, SPEC_CTRL_ENABLE_IBRS);
++}
++
++static inline void __enable_indirect_speculation(void)
++{
++       native_wrmsrl(MSR_IA32_SPEC_CTRL, SPEC_CTRL_DISABLE_IBRS);
++}
++
++#endif /* _ASM_X86_SPEC_CTRL_H */
++
+diff --git a/arch/x86/kernel/cpu/Makefile b/arch/x86/kernel/cpu/Makefile
+index 570e8bb..fe33a7f 100644
+--- a/arch/x86/kernel/cpu/Makefile
++++ b/arch/x86/kernel/cpu/Makefile
+@@ -24,6 +24,7 @@ obj-y			+= match.o
+ obj-y			+= bugs.o
+ obj-y			+= aperfmperf.o
+ obj-y			+= cpuid-deps.o
++obj-y                  += spec_ctrl.o
+ 
+ obj-$(CONFIG_PROC_FS)	+= proc.o
+ obj-$(CONFIG_X86_FEATURE_NAMES) += capflags.o powerflags.o
+diff --git a/arch/x86/kernel/cpu/scattered.c b/arch/x86/kernel/cpu/scattered.c
+index 05459ad..a8bf677 100644
+--- a/arch/x86/kernel/cpu/scattered.c
++++ b/arch/x86/kernel/cpu/scattered.c
+@@ -8,6 +8,7 @@
+ #include <asm/processor.h>
+ 
+ #include <asm/apic.h>
++#include <asm/spec_ctrl.h>
+ 
+ struct cpuid_bit {
+ 	u16 feature;
+@@ -56,6 +57,7 @@ void init_scattered_cpuid_features(struct cpuinfo_x86 *c)
+ 		if (regs[cb->reg] & (1 << cb->bit))
+ 			set_cpu_cap(c, cb->feature);
+ 	}
++        spec_ctrl_scan_feature(c);
+ }
+ 
+ u32 get_scattered_cpuid_leaf(unsigned int level, unsigned int sub_leaf,
+diff --git a/arch/x86/kernel/cpu/spec_ctrl.c b/arch/x86/kernel/cpu/spec_ctrl.c
+new file mode 100644
+index 0000000..f17dff0
+--- /dev/null
++++ b/arch/x86/kernel/cpu/spec_ctrl.c
+@@ -0,0 +1,24 @@
++#include <linux/string.h>
++
++#include <asm/spec_ctrl.h>
++#include <asm/cpufeature.h>
++
++static bool ibrs_admin_enabled;
++
++void spec_ctrl_scan_feature(struct cpuinfo_x86 *c)
++{
++       if (boot_cpu_has(X86_FEATURE_SPEC_CTRL)) {
++               if (ibrs_admin_enabled)
++                       set_cpu_cap(c, X86_FEATURE_SPEC_CTRL_IBRS);
++       }
++}
++
++static int __init check_ibrs_param(char *str)
++{
++       if (strcmp(str, "ibrs") == 0)
++               ibrs_admin_enabled = true;
++
++       return 0;
++}
++early_param("spectre_v2", check_ibrs_param);
++
+-- 
+2.9.5
+
