@@ -1,0 +1,97 @@
+diff --git a/arch/x86/entry/entry_32.S b/arch/x86/entry/entry_32.S
+index cf9ef33d299b..b6b83b9d3a0b 100644
+--- a/arch/x86/entry/entry_32.S
++++ b/arch/x86/entry/entry_32.S
+@@ -250,6 +250,23 @@ ENTRY(__switch_to_asm)
+ 	popl	%ebx
+ 	popl	%ebp
+ 
++#ifdef CONFIG_RETPOLINE
++	/*
++	 * When we switch from a shallower to a deeper call stack
++	 * the call stack will underflow in the kernel in the next task.
++	 * This could cause the CPU to fall back to indirect branch
++	 * prediction, which may be poisoned.
++	 *
++	 * To guard against that always fill the return stack with
++	 * known values.
++	 *
++	 * We do this in assembler because it needs to be before
++	 * any calls on the new stack, and this can be difficult to
++	 * ensure in a complex C function like __switch_to.
++	 */
++	ALTERNATIVE "jmp __switch_to", "", X86_FEATURE_RETPOLINE
++	FILL_RETURN_BUFFER
++#endif
+ 	jmp	__switch_to
+ END(__switch_to_asm)
+ 
+diff --git a/arch/x86/entry/entry_64.S b/arch/x86/entry/entry_64.S
+index 9bce6ed03353..1622e07c5ae8 100644
+--- a/arch/x86/entry/entry_64.S
++++ b/arch/x86/entry/entry_64.S
+@@ -495,6 +495,23 @@ ENTRY(__switch_to_asm)
+ 	popq	%rbx
+ 	popq	%rbp
+ 
++#ifdef CONFIG_RETPOLINE
++	/*
++	 * When we switch from a shallower to a deeper call stack
++	 * the call stack will underflow in the kernel in the next task.
++	 * This could cause the CPU to fall back to indirect branch
++	 * prediction, which may be poisoned.
++	 *
++	 * To guard against that always fill the return stack with
++	 * known values.
++	 *
++	 * We do this in assembler because it needs to be before
++	 * any calls on the new stack, and this can be difficult to
++	 * ensure in a complex C function like __switch_to.
++	 */
++	ALTERNATIVE "jmp __switch_to", "", X86_FEATURE_RETPOLINE
++	FILL_RETURN_BUFFER
++#endif
+ 	jmp	__switch_to
+ END(__switch_to_asm)
+ 
+diff --git a/arch/x86/include/asm/nospec-branch.h b/arch/x86/include/asm/nospec-branch.h
+index b8c8eeacb4be..3022b1a4de17 100644
+--- a/arch/x86/include/asm/nospec-branch.h
++++ b/arch/x86/include/asm/nospec-branch.h
+@@ -53,6 +53,36 @@
+ #endif
+ .endm
+ 
++/*
++ * We use 32-N: 32 is the max return buffer size, but there should
++ * have been at a minimum two controlled calls already: one into the
++ * kernel from entry*.S and another into the function containing this
++ * macro. So N=2, thus 30.
++ */
++#define NUM_BRANCHES_TO_FILL	30
++
++/*
++ * Fill the CPU return stack buffer to prevent indirect branch
++ * prediction on underflow. We need a 'nop' after each call so it
++ * isn't interpreted by the CPU as a simple 'push %eip', which would
++ * be handled specially and not put anything in the RSB.
++ *
++ * Required in various cases for retpoline and IBRS-based mitigations
++ * for Spectre variant 2 vulnerability.
++ */
++.macro FILL_RETURN_BUFFER
++	.rept	NUM_BRANCHES_TO_FILL
++	call	1221f
++	nop
++1221:
++	.endr
++#ifdef CONFIG_64BIT
++	addq	$8*NUM_BRANCHES_TO_FILL, %rsp
++#else
++	addl    $4*NUM_BRANCHES_TO_FILL, %esp
++#endif
++.endm
++
+ #else /* __ASSEMBLY__ */
+ 
+ #if defined(CONFIG_X86_64) && defined(RETPOLINE)
