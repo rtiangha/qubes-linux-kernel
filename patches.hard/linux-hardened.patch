@@ -1,8 +1,8 @@
 diff --git a/Documentation/admin-guide/kernel-parameters.txt b/Documentation/admin-guide/kernel-parameters.txt
-index 520fdec15bbb..000e7d00f601 100644
+index 8122b5f98ea1..3657bde6a79b 100644
 --- a/Documentation/admin-guide/kernel-parameters.txt
 +++ b/Documentation/admin-guide/kernel-parameters.txt
-@@ -2899,6 +2899,11 @@
+@@ -2902,6 +2902,11 @@
  			the specified number of seconds.  This is to be used if
  			your oopses keep scrolling off the screen.
  
@@ -164,10 +164,10 @@ index bcd22d7ee590..3b4bb8d4db90 100644
  
  /*
 diff --git a/arch/x86/Kconfig b/arch/x86/Kconfig
-index 592c974d4558..2a5b2a390f13 100644
+index 17de6acc0eab..bd30c14b08ec 100644
 --- a/arch/x86/Kconfig
 +++ b/arch/x86/Kconfig
-@@ -1139,8 +1139,7 @@ config VM86
+@@ -1153,8 +1153,7 @@ config VM86
         default X86_LEGACY_VM86
  
  config X86_16BIT
@@ -177,7 +177,7 @@ index 592c974d4558..2a5b2a390f13 100644
  	depends on MODIFY_LDT_SYSCALL
  	---help---
  	  This option is required by programs like Wine to run 16-bit
-@@ -2214,7 +2213,7 @@ config COMPAT_VDSO
+@@ -2228,7 +2227,7 @@ config COMPAT_VDSO
  choice
  	prompt "vsyscall table for legacy applications"
  	depends on X86_64
@@ -186,7 +186,7 @@ index 592c974d4558..2a5b2a390f13 100644
  	help
  	  Legacy user code that does not know how to find the vDSO expects
  	  to be able to issue three syscalls by calling fixed addresses in
-@@ -2304,8 +2303,7 @@ config CMDLINE_OVERRIDE
+@@ -2318,8 +2317,7 @@ config CMDLINE_OVERRIDE
  	  be set to 'N' under normal conditions.
  
  config MODIFY_LDT_SYSCALL
@@ -318,7 +318,7 @@ index 3a091cea36c5..0931c05a3348 100644
 -extern unsigned long align_vdso_addr(unsigned long);
  #endif /* _ASM_X86_ELF_H */
 diff --git a/arch/x86/include/asm/tlbflush.h b/arch/x86/include/asm/tlbflush.h
-index f9b48ce152eb..34b7947a111a 100644
+index 3effd3c994af..7bcd92e9f8e4 100644
 --- a/arch/x86/include/asm/tlbflush.h
 +++ b/arch/x86/include/asm/tlbflush.h
 @@ -251,6 +251,7 @@ static inline void cr4_set_bits(unsigned long mask)
@@ -354,10 +354,10 @@ index f9b48ce152eb..34b7947a111a 100644
  	native_write_cr4(cr4 ^ X86_CR4_PGE);
  	/* write old PGE again and flush TLBs */
 diff --git a/arch/x86/kernel/cpu/common.c b/arch/x86/kernel/cpu/common.c
-index 2d3bd2215e5b..9c1a8586f9c9 100644
+index 372ba3fb400f..10a857c3581b 100644
 --- a/arch/x86/kernel/cpu/common.c
 +++ b/arch/x86/kernel/cpu/common.c
-@@ -1529,7 +1529,6 @@ void cpu_init(void)
+@@ -1532,7 +1532,6 @@ void cpu_init(void)
  	wrmsrl(MSR_KERNEL_GS_BASE, 0);
  	barrier();
  
@@ -1973,7 +1973,7 @@ index 0de87a376aaa..a28f1b1aa59a 100644
  		goto set_brk;
  
 diff --git a/mm/page_alloc.c b/mm/page_alloc.c
-index d51c2087c498..5a9d50461bd2 100644
+index d51c2087c498..b346fd566203 100644
 --- a/mm/page_alloc.c
 +++ b/mm/page_alloc.c
 @@ -68,6 +68,7 @@
@@ -2006,9 +2006,9 @@ index d51c2087c498..5a9d50461bd2 100644
  	}
 +
 +	if (IS_ENABLED(CONFIG_PAGE_SANITIZE)) {
-+		unsigned long index = 1UL << order;
-+		for (; index; --index)
-+			clear_highpage(page + index - 1);
++		int i;
++		for (i = 0; i < (1 << order); i++)
++			clear_highpage(page + i);
 +	}
 +
  	arch_free_page(page, order);
@@ -2047,14 +2047,13 @@ index d51c2087c498..5a9d50461bd2 100644
  }
  
  #ifdef CONFIG_DEBUG_VM
-@@ -1778,6 +1810,12 @@ static void prep_new_page(struct page *page, unsigned int order, gfp_t gfp_flags
+@@ -1778,6 +1810,11 @@ static void prep_new_page(struct page *page, unsigned int order, gfp_t gfp_flags
  
  	post_alloc_hook(page, order, gfp_flags);
  
 +	if (IS_ENABLED(CONFIG_PAGE_SANITIZE_VERIFY)) {
-+		unsigned long index = 1UL << order;
-+		for (; index; --index)
-+			verify_zero_highpage(page + index - 1);
++		for (i = 0; i < (1 << order); i++)
++			verify_zero_highpage(page + i);
 +	}
 +
  	if (!free_pages_prezeroed() && (gfp_flags & __GFP_ZERO))
@@ -2569,7 +2568,7 @@ index 98314b400a95..8f238f4f8fdd 100644
  	return err;
  }
 diff --git a/security/Kconfig b/security/Kconfig
-index 6614b9312b45..a9f68c749d51 100644
+index b5c2b5d0c6c0..a13b1a632269 100644
 --- a/security/Kconfig
 +++ b/security/Kconfig
 @@ -8,7 +8,7 @@ source security/keys/Kconfig
