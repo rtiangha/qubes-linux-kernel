@@ -1,0 +1,647 @@
+diff --git a/Documentation/speculation.txt b/Documentation/speculation.txt
+new file mode 100644
+index 000000000000..a47fbffe0dab
+--- /dev/null
++++ b/Documentation/speculation.txt
+@@ -0,0 +1,143 @@
++This document explains potential effects of speculation, and how undesirable
++effects can be mitigated portably using common APIs.
++
++===========
++Speculation
++===========
++
++To improve performance and minimize average latencies, many contemporary CPUs
++employ speculative execution techniques such as branch prediction, performing
++work which may be discarded at a later stage.
++
++Typically speculative execution cannot be observed from architectural state,
++such as the contents of registers. However, in some cases it is possible to
++observe its impact on microarchitectural state, such as the presence or
++absence of data in caches. Such state may form side-channels which can be
++observed to extract secret information.
++
++For example, in the presence of branch prediction, it is possible for bounds
++checks to be ignored by code which is speculatively executed. Consider the
++following code:
++
++	int load_array(int *array, unsigned int idx)
++	{
++		if (idx >= MAX_ARRAY_ELEMS)
++			return 0;
++		else
++			return array[idx];
++	}
++
++Which, on arm64, may be compiled to an assembly sequence such as:
++
++	CMP	<idx>, #MAX_ARRAY_ELEMS
++	B.LT	less
++	MOV	<returnval>, #0
++	RET
++  less:
++	LDR	<returnval>, [<array>, <idx>]
++	RET
++
++It is possible that a CPU mis-predicts the conditional branch, and
++speculatively loads array[idx], even if idx >= MAX_ARRAY_ELEMS. This value
++will subsequently be discarded, but the speculated load may affect
++microarchitectural state which can be subsequently measured.
++
++More complex sequences involving multiple dependent memory accesses may result
++in sensitive information being leaked. Consider the following code, building
++on the prior example:
++
++	int load_dependent_arrays(int *arr1, int *arr2, int idx)
++	{
++		int val1, val2,
++
++		val1 = load_array(arr1, idx);
++		val2 = load_array(arr2, val1);
++
++		return val2;
++	}
++
++Under speculation, the first call to load_array() may return the value of an
++out-of-bounds address, while the second call will influence microarchitectural
++state dependent on this value. This may provide an arbitrary read primitive.
++
++====================================
++Mitigating speculation side-channels
++====================================
++
++The kernel provides a generic API to ensure that bounds checks are respected
++even under speculation. Architectures which are affected by speculation-based
++side-channels are expected to implement these primitives.
++
++The array_ptr() helper in <asm/barrier.h> can be used to prevent
++information from being leaked via side-channels.
++
++A call to array_ptr(arr, idx, sz) returns a sanitized pointer to
++arr[idx] only if idx falls in the [0, sz) interval. When idx < 0 or idx > sz,
++NULL is returned. Additionally, array_ptr() of an out-of-bounds pointer is
++not propagated to code which is speculatively executed.
++
++This can be used to protect the earlier load_array() example:
++
++	int load_array(int *array, unsigned int idx)
++	{
++		int *elem;
++
++		elem = array_ptr(array, idx, MAX_ARRAY_ELEMS);
++		if (elem)
++			return *elem;
++		else
++			return 0;
++	}
++
++This can also be used in situations where multiple fields on a structure are
++accessed:
++
++	struct foo array[SIZE];
++	int a, b;
++
++	void do_thing(int idx)
++	{
++		struct foo *elem;
++
++		elem = array_ptr(array, idx, SIZE);
++		if (elem) {
++			a = elem->field_a;
++			b = elem->field_b;
++		}
++	}
++
++It is imperative that the returned pointer is used. Pointers which are
++generated separately are subject to a number of potential CPU and compiler
++optimizations, and may still be used speculatively. For example, this means
++that the following sequence is unsafe:
++
++	struct foo array[SIZE];
++	int a, b;
++
++	void do_thing(int idx)
++	{
++		if (array_ptr(array, idx, SIZE) != NULL) {
++			// unsafe as wrong pointer is used
++			a = array[idx].field_a;
++			b = array[idx].field_b;
++		}
++	}
++
++Similarly, it is unsafe to compare the returned pointer with other pointers,
++as this may permit the compiler to substitute one pointer with another,
++permitting speculation. For example, the following sequence is unsafe:
++
++	struct foo array[SIZE];
++	int a, b;
++
++	void do_thing(int idx)
++	{
++		struct foo *elem = array_ptr(array, idx, size);
++
++		// unsafe due to pointer substitution
++		if (elem == &array[idx]) {
++			a = elem->field_a;
++			b = elem->field_b;
++		}
++	}
++
+diff --git a/arch/x86/entry/entry_64.S b/arch/x86/entry/entry_64.S
+index 4f8e1d35a97c..2320017077d4 100644
+--- a/arch/x86/entry/entry_64.S
++++ b/arch/x86/entry/entry_64.S
+@@ -35,6 +35,7 @@
+ #include <asm/asm.h>
+ #include <asm/smap.h>
+ #include <asm/pgtable_types.h>
++#include <asm/smap.h>
+ #include <asm/export.h>
+ #include <asm/frame.h>
+ #include <asm/nospec-branch.h>
+@@ -264,6 +265,7 @@ entry_SYSCALL_64_fastpath:
+ 	cmpl	$__NR_syscall_max, %eax
+ #endif
+ 	ja	1f				/* return -ENOSYS (already in pt_regs->ax) */
++	MASK_NOSPEC %r11 %rax			/* sanitize syscall_nr wrt speculation */
+ 	movq	%r10, %rcx
+ 
+ 	/*
+diff --git a/arch/x86/include/asm/barrier.h b/arch/x86/include/asm/barrier.h
+index 7fb336210e1b..0f48c832d1fb 100644
+--- a/arch/x86/include/asm/barrier.h
++++ b/arch/x86/include/asm/barrier.h
+@@ -24,6 +24,34 @@
+ #define wmb()	asm volatile("sfence" ::: "memory")
+ #endif
+ 
++/**
++ * array_ptr_mask - generate a mask for array_ptr() that is ~0UL when
++ * the bounds check succeeds and 0 otherwise
++ */
++#define array_ptr_mask array_ptr_mask
++static inline unsigned long array_ptr_mask(unsigned long idx, unsigned long sz)
++{
++	unsigned long mask;
++
++	/*
++	 * mask = index - size, if that result is >= 0 then the index is
++	 * invalid and the mask is 0 else ~0
++	 */
++#ifdef CONFIG_X86_32
++	asm ("cmpl %1,%2; sbbl %0,%0;"
++#else
++	asm ("cmpq %1,%2; sbbq %0,%0;"
++#endif
++			:"=r" (mask)
++			:"r"(sz),"r" (idx)
++			:"cc");
++	return mask;
++}
++
++/* prevent speculative execution past this barrier */
++#define ifence() alternative_2("", "mfence", X86_FEATURE_MFENCE_RDTSC, \
++				   "lfence", X86_FEATURE_LFENCE_RDTSC)
++
+ #ifdef CONFIG_X86_PPRO_FENCE
+ #define dma_rmb()	rmb()
+ #else
+diff --git a/arch/x86/include/asm/msr.h b/arch/x86/include/asm/msr.h
+index 07962f5f6fba..e426d2a33ff3 100644
+--- a/arch/x86/include/asm/msr.h
++++ b/arch/x86/include/asm/msr.h
+@@ -214,8 +214,7 @@ static __always_inline unsigned long long rdtsc_ordered(void)
+ 	 * that some other imaginary CPU is updating continuously with a
+ 	 * time stamp.
+ 	 */
+-	alternative_2("", "mfence", X86_FEATURE_MFENCE_RDTSC,
+-			  "lfence", X86_FEATURE_LFENCE_RDTSC);
++	ifence();
+ 	return rdtsc();
+ }
+ 
+diff --git a/arch/x86/include/asm/smap.h b/arch/x86/include/asm/smap.h
+index db333300bd4b..3b5b2cf58dc6 100644
+--- a/arch/x86/include/asm/smap.h
++++ b/arch/x86/include/asm/smap.h
+@@ -25,6 +25,30 @@
+ 
+ #include <asm/alternative-asm.h>
+ 
++/*
++ * MASK_NOSPEC - sanitize the value of a user controlled value with
++ * respect to speculation
++ *
++ * In the get_user path once we have determined that the pointer is
++ * below the current address limit sanitize its value with respect to
++ * speculation. In the case when the pointer is above the address limit
++ * this directs the cpu to speculate with a NULL ptr rather than
++ * something targeting kernel memory.
++ *
++ * In the syscall entry path it is possible to speculate past the
++ * validation of the system call number. Use MASK_NOSPEC to sanitize the
++ * syscall array index to zero (sys_read) rather than an arbitrary
++ * target.
++ *
++ * assumes CF is set from a previous 'cmp' i.e.:
++ *     cmp TASK_addr_limit, %ptr
++ *     cmp __NR_syscall_max, %idx
++ */
++.macro MASK_NOSPEC mask val
++	sbb \mask, \mask
++	and \mask, \val
++.endm
++
+ #ifdef CONFIG_X86_SMAP
+ 
+ #define ASM_CLAC \
+diff --git a/arch/x86/include/asm/uaccess.h b/arch/x86/include/asm/uaccess.h
+index 574dff4d2913..a930585fa3b5 100644
+--- a/arch/x86/include/asm/uaccess.h
++++ b/arch/x86/include/asm/uaccess.h
+@@ -124,6 +124,11 @@ extern int __get_user_bad(void);
+ 
+ #define __uaccess_begin() stac()
+ #define __uaccess_end()   clac()
++#define __uaccess_begin_nospec()	\
++({					\
++	stac();				\
++	ifence();			\
++})
+ 
+ /*
+  * This is a type: either unsigned long, if the argument fits into
+@@ -445,7 +450,7 @@ do {									\
+ ({									\
+ 	int __gu_err;							\
+ 	__inttype(*(ptr)) __gu_val;					\
+-	__uaccess_begin();						\
++	__uaccess_begin_nospec();					\
+ 	__get_user_size(__gu_val, (ptr), (size), __gu_err, -EFAULT);	\
+ 	__uaccess_end();						\
+ 	(x) = (__force __typeof__(*(ptr)))__gu_val;			\
+@@ -487,6 +492,10 @@ struct __large_struct { unsigned long buf[100]; };
+ 	__uaccess_begin();						\
+ 	barrier();
+ 
++#define uaccess_try_nospec do {						\
++	current->thread.uaccess_err = 0;				\
++	__uaccess_begin_nospec();					\
++
+ #define uaccess_catch(err)						\
+ 	__uaccess_end();						\
+ 	(err) |= (current->thread.uaccess_err ? -EFAULT : 0);		\
+@@ -548,7 +557,7 @@ struct __large_struct { unsigned long buf[100]; };
+  *	get_user_ex(...);
+  * } get_user_catch(err)
+  */
+-#define get_user_try		uaccess_try
++#define get_user_try		uaccess_try_nospec
+ #define get_user_catch(err)	uaccess_catch(err)
+ 
+ #define get_user_ex(x, ptr)	do {					\
+@@ -582,7 +591,7 @@ extern void __cmpxchg_wrong_size(void)
+ 	__typeof__(ptr) __uval = (uval);				\
+ 	__typeof__(*(ptr)) __old = (old);				\
+ 	__typeof__(*(ptr)) __new = (new);				\
+-	__uaccess_begin();						\
++	__uaccess_begin_nospec();					\
+ 	switch (size) {							\
+ 	case 1:								\
+ 	{								\
+diff --git a/arch/x86/include/asm/uaccess_32.h b/arch/x86/include/asm/uaccess_32.h
+index 72950401b223..ba2dc1930630 100644
+--- a/arch/x86/include/asm/uaccess_32.h
++++ b/arch/x86/include/asm/uaccess_32.h
+@@ -29,21 +29,21 @@ raw_copy_from_user(void *to, const void __user *from, unsigned long n)
+ 		switch (n) {
+ 		case 1:
+ 			ret = 0;
+-			__uaccess_begin();
++			__uaccess_begin_nospec();
+ 			__get_user_asm_nozero(*(u8 *)to, from, ret,
+ 					      "b", "b", "=q", 1);
+ 			__uaccess_end();
+ 			return ret;
+ 		case 2:
+ 			ret = 0;
+-			__uaccess_begin();
++			__uaccess_begin_nospec();
+ 			__get_user_asm_nozero(*(u16 *)to, from, ret,
+ 					      "w", "w", "=r", 2);
+ 			__uaccess_end();
+ 			return ret;
+ 		case 4:
+ 			ret = 0;
+-			__uaccess_begin();
++			__uaccess_begin_nospec();
+ 			__get_user_asm_nozero(*(u32 *)to, from, ret,
+ 					      "l", "k", "=r", 4);
+ 			__uaccess_end();
+diff --git a/arch/x86/include/asm/uaccess_64.h b/arch/x86/include/asm/uaccess_64.h
+index f07ef3c575db..62546b3a398e 100644
+--- a/arch/x86/include/asm/uaccess_64.h
++++ b/arch/x86/include/asm/uaccess_64.h
+@@ -55,31 +55,31 @@ raw_copy_from_user(void *dst, const void __user *src, unsigned long size)
+ 		return copy_user_generic(dst, (__force void *)src, size);
+ 	switch (size) {
+ 	case 1:
+-		__uaccess_begin();
++		__uaccess_begin_nospec();
+ 		__get_user_asm_nozero(*(u8 *)dst, (u8 __user *)src,
+ 			      ret, "b", "b", "=q", 1);
+ 		__uaccess_end();
+ 		return ret;
+ 	case 2:
+-		__uaccess_begin();
++		__uaccess_begin_nospec();
+ 		__get_user_asm_nozero(*(u16 *)dst, (u16 __user *)src,
+ 			      ret, "w", "w", "=r", 2);
+ 		__uaccess_end();
+ 		return ret;
+ 	case 4:
+-		__uaccess_begin();
++		__uaccess_begin_nospec();
+ 		__get_user_asm_nozero(*(u32 *)dst, (u32 __user *)src,
+ 			      ret, "l", "k", "=r", 4);
+ 		__uaccess_end();
+ 		return ret;
+ 	case 8:
+-		__uaccess_begin();
++		__uaccess_begin_nospec();
+ 		__get_user_asm_nozero(*(u64 *)dst, (u64 __user *)src,
+ 			      ret, "q", "", "=r", 8);
+ 		__uaccess_end();
+ 		return ret;
+ 	case 10:
+-		__uaccess_begin();
++		__uaccess_begin_nospec();
+ 		__get_user_asm_nozero(*(u64 *)dst, (u64 __user *)src,
+ 			       ret, "q", "", "=r", 10);
+ 		if (likely(!ret))
+@@ -89,7 +89,7 @@ raw_copy_from_user(void *dst, const void __user *src, unsigned long size)
+ 		__uaccess_end();
+ 		return ret;
+ 	case 16:
+-		__uaccess_begin();
++		__uaccess_begin_nospec();
+ 		__get_user_asm_nozero(*(u64 *)dst, (u64 __user *)src,
+ 			       ret, "q", "", "=r", 16);
+ 		if (likely(!ret))
+diff --git a/arch/x86/kvm/vmx.c b/arch/x86/kvm/vmx.c
+index c829d89e2e63..20b9b0b5e336 100644
+--- a/arch/x86/kvm/vmx.c
++++ b/arch/x86/kvm/vmx.c
+@@ -34,6 +34,7 @@
+ #include <linux/tboot.h>
+ #include <linux/hrtimer.h>
+ #include <linux/frame.h>
++#include <linux/nospec.h>
+ #include "kvm_cache_regs.h"
+ #include "x86.h"
+ 
+@@ -898,21 +899,15 @@ static const unsigned short vmcs_field_to_offset_table[] = {
+ 
+ static inline short vmcs_field_to_offset(unsigned long field)
+ {
+-	BUILD_BUG_ON(ARRAY_SIZE(vmcs_field_to_offset_table) > SHRT_MAX);
+-
+-	if (field >= ARRAY_SIZE(vmcs_field_to_offset_table))
+-		return -ENOENT;
++	const unsigned short *offset;
+ 
+-	/*
+-	 * FIXME: Mitigation for CVE-2017-5753.  To be replaced with a
+-	 * generic mechanism.
+-	 */
+-	asm("lfence");
++	BUILD_BUG_ON(ARRAY_SIZE(vmcs_field_to_offset_table) > SHRT_MAX);
+ 
+-	if (vmcs_field_to_offset_table[field] == 0)
++	offset = array_ptr(vmcs_field_to_offset_table, field,
++			ARRAY_SIZE(vmcs_field_to_offset_table));
++	if (!offset || *offset == 0)
+ 		return -ENOENT;
+-
+-	return vmcs_field_to_offset_table[field];
++	return *offset;
+ }
+ 
+ static inline struct vmcs12 *get_vmcs12(struct kvm_vcpu *vcpu)
+diff --git a/arch/x86/lib/getuser.S b/arch/x86/lib/getuser.S
+index c97d935a29e8..07d0e8a28b17 100644
+--- a/arch/x86/lib/getuser.S
++++ b/arch/x86/lib/getuser.S
+@@ -40,6 +40,7 @@ ENTRY(__get_user_1)
+ 	mov PER_CPU_VAR(current_task), %_ASM_DX
+ 	cmp TASK_addr_limit(%_ASM_DX),%_ASM_AX
+ 	jae bad_get_user
++	MASK_NOSPEC %_ASM_DX, %_ASM_AX
+ 	ASM_STAC
+ 1:	movzbl (%_ASM_AX),%edx
+ 	xor %eax,%eax
+@@ -54,6 +55,7 @@ ENTRY(__get_user_2)
+ 	mov PER_CPU_VAR(current_task), %_ASM_DX
+ 	cmp TASK_addr_limit(%_ASM_DX),%_ASM_AX
+ 	jae bad_get_user
++	MASK_NOSPEC %_ASM_DX, %_ASM_AX
+ 	ASM_STAC
+ 2:	movzwl -1(%_ASM_AX),%edx
+ 	xor %eax,%eax
+@@ -68,6 +70,7 @@ ENTRY(__get_user_4)
+ 	mov PER_CPU_VAR(current_task), %_ASM_DX
+ 	cmp TASK_addr_limit(%_ASM_DX),%_ASM_AX
+ 	jae bad_get_user
++	MASK_NOSPEC %_ASM_DX, %_ASM_AX
+ 	ASM_STAC
+ 3:	movl -3(%_ASM_AX),%edx
+ 	xor %eax,%eax
+@@ -83,6 +86,7 @@ ENTRY(__get_user_8)
+ 	mov PER_CPU_VAR(current_task), %_ASM_DX
+ 	cmp TASK_addr_limit(%_ASM_DX),%_ASM_AX
+ 	jae bad_get_user
++	MASK_NOSPEC %_ASM_DX, %_ASM_AX
+ 	ASM_STAC
+ 4:	movq -7(%_ASM_AX),%rdx
+ 	xor %eax,%eax
+@@ -94,6 +98,7 @@ ENTRY(__get_user_8)
+ 	mov PER_CPU_VAR(current_task), %_ASM_DX
+ 	cmp TASK_addr_limit(%_ASM_DX),%_ASM_AX
+ 	jae bad_get_user_8
++	MASK_NOSPEC %_ASM_DX, %_ASM_AX
+ 	ASM_STAC
+ 4:	movl -7(%_ASM_AX),%edx
+ 5:	movl -3(%_ASM_AX),%ecx
+diff --git a/arch/x86/lib/usercopy_32.c b/arch/x86/lib/usercopy_32.c
+index 1b377f734e64..7add8ba06887 100644
+--- a/arch/x86/lib/usercopy_32.c
++++ b/arch/x86/lib/usercopy_32.c
+@@ -331,12 +331,12 @@ do {									\
+ 
+ unsigned long __copy_user_ll(void *to, const void *from, unsigned long n)
+ {
+-	stac();
++	__uaccess_begin_nospec();
+ 	if (movsl_is_ok(to, from, n))
+ 		__copy_user(to, from, n);
+ 	else
+ 		n = __copy_user_intel(to, from, n);
+-	clac();
++	__uaccess_end();
+ 	return n;
+ }
+ EXPORT_SYMBOL(__copy_user_ll);
+@@ -344,7 +344,7 @@ EXPORT_SYMBOL(__copy_user_ll);
+ unsigned long __copy_from_user_ll_nocache_nozero(void *to, const void __user *from,
+ 					unsigned long n)
+ {
+-	stac();
++	__uaccess_begin_nospec();
+ #ifdef CONFIG_X86_INTEL_USERCOPY
+ 	if (n > 64 && static_cpu_has(X86_FEATURE_XMM2))
+ 		n = __copy_user_intel_nocache(to, from, n);
+@@ -353,7 +353,7 @@ unsigned long __copy_from_user_ll_nocache_nozero(void *to, const void __user *fr
+ #else
+ 	__copy_user(to, from, n);
+ #endif
+-	clac();
++	__uaccess_end();
+ 	return n;
+ }
+ EXPORT_SYMBOL(__copy_from_user_ll_nocache_nozero);
+diff --git a/include/linux/fdtable.h b/include/linux/fdtable.h
+index 1c65817673db..9731f1a255db 100644
+--- a/include/linux/fdtable.h
++++ b/include/linux/fdtable.h
+@@ -10,6 +10,7 @@
+ #include <linux/compiler.h>
+ #include <linux/spinlock.h>
+ #include <linux/rcupdate.h>
++#include <linux/nospec.h>
+ #include <linux/types.h>
+ #include <linux/init.h>
+ #include <linux/fs.h>
+@@ -81,9 +82,11 @@ struct dentry;
+ static inline struct file *__fcheck_files(struct files_struct *files, unsigned int fd)
+ {
+ 	struct fdtable *fdt = rcu_dereference_raw(files->fdt);
++	struct file __rcu **fdp;
+ 
+-	if (fd < fdt->max_fds)
+-		return rcu_dereference_raw(fdt->fd[fd]);
++	fdp = array_ptr(fdt->fd, fd, fdt->max_fds);
++	if (fdp)
++		return rcu_dereference_raw(*fdp);
+ 	return NULL;
+ }
+ 
+diff --git a/include/linux/nospec.h b/include/linux/nospec.h
+new file mode 100644
+index 000000000000..b8a9222e34d1
+--- /dev/null
++++ b/include/linux/nospec.h
+@@ -0,0 +1,65 @@
++// SPDX-License-Identifier: GPL-2.0
++// Copyright(c) 2018 Intel Corporation. All rights reserved.
++
++#ifndef __NOSPEC_H__
++#define __NOSPEC_H__
++
++#include <linux/jump_label.h>
++#include <asm/barrier.h>
++
++/*
++ * If idx is negative or if idx > size then bit 63 is set in the mask,
++ * and the value of ~(-1L) is zero. When the mask is zero, bounds check
++ * failed, array_ptr will return NULL.
++ */
++#ifndef array_ptr_mask
++static inline unsigned long array_ptr_mask(unsigned long idx, unsigned long sz)
++{
++	return ~(long)(idx | (sz - 1 - idx)) >> (BITS_PER_LONG - 1);
++}
++#endif
++
++/**
++ * array_ptr - Generate a pointer to an array element, ensuring
++ * the pointer is bounded under speculation to NULL.
++ *
++ * @base: the base of the array
++ * @idx: the index of the element, must be less than LONG_MAX
++ * @sz: the number of elements in the array, must be less than LONG_MAX
++ *
++ * If @idx falls in the interval [0, @sz), returns the pointer to
++ * @arr[@idx], otherwise returns NULL.
++ */
++#define array_ptr(base, idx, sz)					\
++({									\
++	union { typeof(*(base)) *_ptr; unsigned long _bit; } __u;	\
++	typeof(*(base)) *_arr = (base);					\
++	unsigned long _i = (idx);					\
++	unsigned long _mask = array_ptr_mask(_i, (sz));			\
++									\
++	__u._ptr = _arr + _i;						\
++	__u._bit &= _mask;						\
++	__u._ptr;							\
++})
++
++/**
++ * array_idx - Generate a pointer to an array index, ensuring the
++ * pointer is bounded under speculation to NULL.
++ *
++ * @idx: the index of the element, must be less than LONG_MAX
++ * @sz: the number of elements in the array, must be less than LONG_MAX
++ *
++ * If @idx falls in the interval [0, @sz), returns &@idx otherwise
++ * returns NULL.
++ */
++#define array_idx(idx, sz)						\
++({									\
++	union { typeof((idx)) *_ptr; unsigned long _bit; } __u;		\
++	typeof(idx) *_i = &(idx);					\
++	unsigned long _mask = array_ptr_mask(*_i, (sz));		\
++									\
++	__u._ptr = _i;							\
++	__u._bit &= _mask;						\
++	__u._ptr;							\
++})
++#endif /* __NOSPEC_H__ */
+diff --git a/net/wireless/nl80211.c b/net/wireless/nl80211.c
+index 2b3dbcd40e46..202cb1dc03ee 100644
+--- a/net/wireless/nl80211.c
++++ b/net/wireless/nl80211.c
+@@ -16,6 +16,7 @@
+ #include <linux/nl80211.h>
+ #include <linux/rtnetlink.h>
+ #include <linux/netlink.h>
++#include <linux/nospec.h>
+ #include <linux/etherdevice.h>
+ #include <net/net_namespace.h>
+ #include <net/genetlink.h>
+@@ -2056,20 +2057,23 @@ static const struct nla_policy txq_params_policy[NL80211_TXQ_ATTR_MAX + 1] = {
+ static int parse_txq_params(struct nlattr *tb[],
+ 			    struct ieee80211_txq_params *txq_params)
+ {
++	u8 ac, *idx;
++
+ 	if (!tb[NL80211_TXQ_ATTR_AC] || !tb[NL80211_TXQ_ATTR_TXOP] ||
+ 	    !tb[NL80211_TXQ_ATTR_CWMIN] || !tb[NL80211_TXQ_ATTR_CWMAX] ||
+ 	    !tb[NL80211_TXQ_ATTR_AIFS])
+ 		return -EINVAL;
+ 
+-	txq_params->ac = nla_get_u8(tb[NL80211_TXQ_ATTR_AC]);
++	ac = nla_get_u8(tb[NL80211_TXQ_ATTR_AC]);
+ 	txq_params->txop = nla_get_u16(tb[NL80211_TXQ_ATTR_TXOP]);
+ 	txq_params->cwmin = nla_get_u16(tb[NL80211_TXQ_ATTR_CWMIN]);
+ 	txq_params->cwmax = nla_get_u16(tb[NL80211_TXQ_ATTR_CWMAX]);
+ 	txq_params->aifs = nla_get_u8(tb[NL80211_TXQ_ATTR_AIFS]);
+ 
+-	if (txq_params->ac >= NL80211_NUM_ACS)
++	idx = array_idx(ac, NL80211_NUM_ACS);
++	if (!idx)
+ 		return -EINVAL;
+-
++	txq_params->ac = *idx;
+ 	return 0;
+ }
+ 
