@@ -1,9 +1,9 @@
 # qubes-linux-kernel
 Qubes component: linux-kernel
 
-VERY experimental. Adds patches from the Linux Hardened project, plus various patches from the LKML that address the Meltdown/Spectre issue until official fixes are merged upstream (and maybe other issues too that are discovered over time). Could break at any moment (or not even compile??); provided as-is for anyone that wants to play around with it, with no guarantees of support. Will need a Retpoline enabled compiler to fully take advantage of all of the security features offered by Retpoline (Currently gcc 7.3 and 8.1).
+VERY experimental. Adds patches from the [Linux Hardened](https://github.com/copperhead/linux-hardened) project, plus various patches from the [LKML](https://patchwork.kernel.org/project/LKML/list/) that address the Meltdown/Spectre issue until official fixes are merged upstream (and maybe other issues too that are discovered over time). Could break at any moment (or not even compile??); provided as-is for anyone that wants to play around with it, with no guarantees of support. Will need a Retpoline enabled compiler to fully take advantage of all of the security features offered by Retpoline (Currently gcc 7.3 out now and 8.1 to be released in March).
 
-**Current Status**:  Retpoline patches are now included upstream. IBRS v3 patches removed until upstream sorts out how they actually want to proceed with implementation. Proposed Spectre v1 mitigations from kernel 4.16 added. Boots and compiles successfully using a standard Fedora 25 build environment.
+**Current Status**:  Retpoline patches are now included upstream. IBRS patches removed until upstream sorts out how they actually want to proceed with implementation. Proposed Spectre v1 mitigations from kernel 4.16 added. Boots and compiles successfully using a standard Fedora 25 build environment.
 
 **Backporting Retpoline-enabled GCC to Fedora 25**
 
@@ -15,7 +15,7 @@ Two options:
 
 2) Backport Fedora 28 Retpoline-enabled gcc 7.3.x RPMs to Fedora 25:
 
-- Grab all of the following Fedora 28 Rawhide RPMs (or the latest in the 7.3.x series) from an RPM source that you trust (Possible option: [RPMFind](https://www.rpmfind.net/linux/rpm2html/) ).
+- Grab all of the following proposed Fedora 28 RPMs (or the latest in the 7.3.x series) from an RPM source that you trust (Possible option: [RPMFind](https://www.rpmfind.net/linux/rpm2html/) ).
 ```
 cpp-7.3.1-1.fc28.x86_64.rpm
 gcc-7.3.1-1.fc28.x86_64.rpm
@@ -73,3 +73,8 @@ Alternatively, you could download the src rpms and compile things yourself (that
 - In the Fedora 25 AppVM, install all RPMs using <code>sudo rpm -ivh --force *.rpm</code>. If complaints about missing system packages appear, make note of them, then in the Fedora 25 TemplateVM, install the Fedora 25 equivalents of the missing packages (<code> sudo dnf install *packagename*</code>). Then shut down the TemplateVM, reboot the AppVM, and then try installing the new rpms again. Keep repeating until the backported rpms install cleanly.
 - Verify that your AppVM is now using the new 7.3 version of gcc by running <code> gcc -v </code>.
 - Once done, run <code>make rpms</code> in the kernel build directory and the build process will use the new Retpoline-enabled gcc compiler instead of the standard Fedora 25 version. To make the compiler changes permanent, install the backported rpms into the TemplateVM instead of the AppVM.
+- You can verify that Retpoline protection for Spectre v2 is fully enabled by running <code> grep . /sys/devices/system/cpu/vulnerabilities/spectre_v2</code> in dom0 or VM. It should look something like this:
+```
+user@disp1:~$ grep . /sys/devices/system/cpu/vulnerabilities/spectre_v2
+Mitigation: Full generic retpoline
+```
