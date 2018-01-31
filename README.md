@@ -73,8 +73,14 @@ Alternatively, you could download the src rpms and compile things yourself (that
 - In the Fedora 25 AppVM, install all RPMs using <code>sudo rpm -ivh --force *.rpm</code>. If complaints about missing system packages appear, make note of them, then in the Fedora 25 TemplateVM, install the Fedora 25 equivalents of the missing packages (<code> sudo dnf install *packagename*</code>). Then shut down the TemplateVM, reboot the AppVM, and then try installing the new rpms again. Keep repeating until the backported rpms install cleanly.
 - Verify that your AppVM is now using the new 7.3 version of gcc by running <code> gcc -v </code>.
 - Once done, run <code>make rpms</code> in the kernel build directory and the build process will use the new Retpoline-enabled gcc compiler instead of the standard Fedora 25 version. To make the compiler changes permanent, install the backported rpms into the TemplateVM instead of the AppVM.
-- You can verify that Retpoline protection for Spectre v2 is fully enabled by running <code> grep . /sys/devices/system/cpu/vulnerabilities/spectre_v2</code> in dom0 or VM. It should look something like this:
+- You can verify that Spectre v1 mitigations and Retpoline protection for Spectre v2 is fully enabled by running:
 ```
-user@disp1:~$ grep . /sys/devices/system/cpu/vulnerabilities/spectre_v2
-Mitigation: Full generic retpoline
+grep . /sys/devices/system/cpu/vulnerabilities/spectre*
+```
+in dom0 or VM. The output should look something like this:
+```
+user@disp1:~$ grep . /sys/devices/system/cpu/vulnerabilities/spectre*
+/sys/devices/system/cpu/vulnerabilities/spectre_v1:Mitigation: __user pointer sanitization
+/sys/devices/system/cpu/vulnerabilities/spectre_v2:Mitigation: Full generic retpoline
+
 ```
