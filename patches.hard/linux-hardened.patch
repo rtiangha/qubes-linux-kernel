@@ -53,6 +53,21 @@ index 694968c7523c..002d86416ef8 100644
  unknown_nmi_panic:
  
  The value in this file affects behavior of handling NMI. When the
+diff --git a/Makefile b/Makefile
+index 90a4bffa8446..dfa8251a4265 100644
+--- a/Makefile
++++ b/Makefile
+@@ -675,6 +675,10 @@ ifneq ($(CONFIG_FRAME_WARN),0)
+ KBUILD_CFLAGS += $(call cc-option,-Wframe-larger-than=${CONFIG_FRAME_WARN})
+ endif
+ 
++ifdef CONFIG_LOCAL_SANITIZE
++KBUILD_CFLAGS   += -fsanitize=local-sanitize
++endif
++
+ # This selects the stack protector compiler flag. Testing it is delayed
+ # until after .config has been reprocessed, in the prepare-compiler-check
+ # target.
 diff --git a/arch/Kconfig b/arch/Kconfig
 index 400b9e1b2f27..4637096f7902 100644
 --- a/arch/Kconfig
@@ -366,7 +381,7 @@ index 372ba3fb400f..10a857c3581b 100644
  
  	/*
 diff --git a/arch/x86/kernel/process.c b/arch/x86/kernel/process.c
-index 3cb2486c47e4..082287714f46 100644
+index 8bd1d8292cf7..29d170b30b42 100644
 --- a/arch/x86/kernel/process.c
 +++ b/arch/x86/kernel/process.c
 @@ -39,6 +39,8 @@
@@ -378,7 +393,7 @@ index 3cb2486c47e4..082287714f46 100644
  
  /*
   * per-CPU TSS segments. Threads are completely 'soft' on Linux,
-@@ -568,7 +570,10 @@ unsigned long arch_align_stack(unsigned long sp)
+@@ -573,7 +575,10 @@ unsigned long arch_align_stack(unsigned long sp)
  
  unsigned long arch_randomize_brk(struct mm_struct *mm)
  {
@@ -512,10 +527,10 @@ index 01e2b353a2b9..9aeddca4a29f 100644
  	struct list_head *cpu_list, local_list;
  
 diff --git a/drivers/ata/libata-core.c b/drivers/ata/libata-core.c
-index ee4c1ec9dca0..03cbb3884790 100644
+index e7ded346d94b..2446c37ac310 100644
 --- a/drivers/ata/libata-core.c
 +++ b/drivers/ata/libata-core.c
-@@ -5116,7 +5116,7 @@ void ata_qc_free(struct ata_queued_cmd *qc)
+@@ -5117,7 +5117,7 @@ void ata_qc_free(struct ata_queued_cmd *qc)
  	struct ata_port *ap;
  	unsigned int tag;
  
@@ -524,7 +539,7 @@ index ee4c1ec9dca0..03cbb3884790 100644
  	ap = qc->ap;
  
  	qc->flags = 0;
-@@ -5133,7 +5133,7 @@ void __ata_qc_complete(struct ata_queued_cmd *qc)
+@@ -5134,7 +5134,7 @@ void __ata_qc_complete(struct ata_queued_cmd *qc)
  	struct ata_port *ap;
  	struct ata_link *link;
  
@@ -820,7 +835,7 @@ index 5f93cfacb3d1..cea0d7d3b23e 100644
  	select CRC32
 -	default y
 diff --git a/fs/pipe.c b/fs/pipe.c
-index 3909c55ed389..763e4ba88a97 100644
+index f0f4ab36c444..35f4fb95858b 100644
 --- a/fs/pipe.c
 +++ b/fs/pipe.c
 @@ -38,7 +38,7 @@ unsigned int pipe_max_size = 1048576;
@@ -962,25 +977,6 @@ index bdaf22582f6e..326ff15d4637 100644
  	if (S_ISDIR(inode->i_mode))
  		mask |= FS_ISDIR;
  
-diff --git a/include/linux/genalloc.h b/include/linux/genalloc.h
-index 872f930f1b06..faff59183ec0 100644
---- a/include/linux/genalloc.h
-+++ b/include/linux/genalloc.h
-@@ -115,11 +115,11 @@ static inline int gen_pool_add(struct gen_pool *pool, unsigned long addr,
- 	return gen_pool_add_virt(pool, addr, -1, size, nid);
- }
- extern void gen_pool_destroy(struct gen_pool *);
--extern unsigned long gen_pool_alloc(struct gen_pool *, size_t);
-+extern unsigned long gen_pool_alloc(struct gen_pool *, size_t) __attribute__((alloc_size(2)));
- extern unsigned long gen_pool_alloc_algo(struct gen_pool *, size_t,
--		genpool_algo_t algo, void *data);
-+		genpool_algo_t algo, void *data) __attribute__((alloc_size(2)));
- extern void *gen_pool_dma_alloc(struct gen_pool *pool, size_t size,
--		dma_addr_t *dma);
-+		dma_addr_t *dma) __attribute__((alloc_size(2)));
- extern void gen_pool_free(struct gen_pool *, unsigned long, size_t);
- extern void gen_pool_for_each_chunk(struct gen_pool *,
- 	void (*)(struct gen_pool *, struct gen_pool_chunk *, void *), void *);
 diff --git a/include/linux/gfp.h b/include/linux/gfp.h
 index 710143741eb5..56769c0870f1 100644
 --- a/include/linux/gfp.h
@@ -1316,10 +1312,23 @@ index 1e5d8c392f15..66d0e49c9987 100644
  extern void *__vmalloc_node_flags(unsigned long size, int node, gfp_t flags);
  static inline void *__vmalloc_node_flags_caller(unsigned long size, int node,
 diff --git a/init/Kconfig b/init/Kconfig
-index 3c1faaa2af4a..032e8ffc552e 100644
+index 46075327c165..72e3249669f4 100644
 --- a/init/Kconfig
 +++ b/init/Kconfig
-@@ -1354,8 +1354,7 @@ config SHMEM
+@@ -1052,6 +1052,12 @@ config CC_OPTIMIZE_FOR_SIZE
+ 
+ endchoice
+ 
++config LOCAL_SANITIZE
++	bool "Zero uninitialized locals"
++	help
++	  Zero-fill uninitialized local variables, other than variable-length
++	  arrays. Requires compiler support.
++
+ config SYSCTL
+ 	bool
+ 
+@@ -1361,8 +1367,7 @@ config SHMEM
  	  which may be appropriate on small systems without swap.
  
  config AIO
@@ -1329,7 +1338,7 @@ index 3c1faaa2af4a..032e8ffc552e 100644
  	help
  	  This option enables POSIX asynchronous I/O which may by used
  	  by some high performance threaded applications. Disabling
-@@ -1484,7 +1483,7 @@ config VM_EVENT_COUNTERS
+@@ -1491,7 +1496,7 @@ config VM_EVENT_COUNTERS
  
  config SLUB_DEBUG
  	default y
@@ -1338,7 +1347,7 @@ index 3c1faaa2af4a..032e8ffc552e 100644
  	depends on SLUB && SYSFS
  	help
  	  SLUB has extensive debug support features. Disabling these can
-@@ -1508,7 +1507,6 @@ config SLUB_MEMCG_SYSFS_ON
+@@ -1515,7 +1520,6 @@ config SLUB_MEMCG_SYSFS_ON
  
  config COMPAT_BRK
  	bool "Disable heap randomization"
@@ -1346,7 +1355,7 @@ index 3c1faaa2af4a..032e8ffc552e 100644
  	help
  	  Randomizing heap placement makes heap exploits harder, but it
  	  also breaks ancient binaries (including anything libc5 based).
-@@ -1555,7 +1553,6 @@ endchoice
+@@ -1562,7 +1566,6 @@ endchoice
  
  config SLAB_MERGE_DEFAULT
  	bool "Allow slab caches to be merged"
@@ -1354,7 +1363,7 @@ index 3c1faaa2af4a..032e8ffc552e 100644
  	help
  	  For reduced kernel memory fragmentation, slab caches can be
  	  merged when they share the same size and other characteristics.
-@@ -1568,9 +1565,9 @@ config SLAB_MERGE_DEFAULT
+@@ -1575,9 +1578,9 @@ config SLAB_MERGE_DEFAULT
  	  command line.
  
  config SLAB_FREELIST_RANDOM
@@ -1365,7 +1374,7 @@ index 3c1faaa2af4a..032e8ffc552e 100644
  	help
  	  Randomizes the freelist order used on creating new pages. This
  	  security feature reduces the predictability of the kernel slab
-@@ -1579,12 +1576,56 @@ config SLAB_FREELIST_RANDOM
+@@ -1586,12 +1589,56 @@ config SLAB_FREELIST_RANDOM
  config SLAB_FREELIST_HARDENED
  	bool "Harden slab freelist metadata"
  	depends on SLUB
@@ -1805,7 +1814,7 @@ index 56aca862c4f5..8396f6202025 100644
  	{
  		.procname	= "ngroups_max",
 diff --git a/kernel/time/timer.c b/kernel/time/timer.c
-index 73e3cdbc61f1..63ce929d2729 100644
+index db5e6daadd94..af39cd0fb99c 100644
 --- a/kernel/time/timer.c
 +++ b/kernel/time/timer.c
 @@ -1624,7 +1624,7 @@ static inline void __run_timers(struct timer_base *base)
@@ -1973,7 +1982,7 @@ index 0de87a376aaa..a28f1b1aa59a 100644
  		goto set_brk;
  
 diff --git a/mm/page_alloc.c b/mm/page_alloc.c
-index d51c2087c498..b346fd566203 100644
+index 2de080003693..3cf4c65ac747 100644
 --- a/mm/page_alloc.c
 +++ b/mm/page_alloc.c
 @@ -68,6 +68,7 @@
@@ -2445,10 +2454,10 @@ index a77d68f2c1b6..d1f1d75f4d1f 100644
  }
  
 diff --git a/net/core/dev.c b/net/core/dev.c
-index 27357fc1730b..50b8fe1a332a 100644
+index ffee085f0357..d458ce306ba6 100644
 --- a/net/core/dev.c
 +++ b/net/core/dev.c
-@@ -4069,7 +4069,7 @@ int netif_rx_ni(struct sk_buff *skb)
+@@ -4080,7 +4080,7 @@ int netif_rx_ni(struct sk_buff *skb)
  }
  EXPORT_SYMBOL(netif_rx_ni);
  
@@ -2457,7 +2466,7 @@ index 27357fc1730b..50b8fe1a332a 100644
  {
  	struct softnet_data *sd = this_cpu_ptr(&softnet_data);
  
-@@ -5583,7 +5583,7 @@ static int napi_poll(struct napi_struct *n, struct list_head *repoll)
+@@ -5594,7 +5594,7 @@ static int napi_poll(struct napi_struct *n, struct list_head *repoll)
  	return work;
  }
  
