@@ -1,14 +1,5 @@
-From e2cb076eb7567d4d9337cdc3aa92a59fef2452ce Mon Sep 17 00:00:00 2001
-From: Reg Tiangha <reg@reginaldtiangha.com>
-Date: Wed, 31 Jan 2018 15:39:36 -0700
-Subject: [PATCH] spectre fix
-
----
- arch/x86/kvm/vmx.c | 12 ++++++++++--
- 1 file changed, 10 insertions(+), 2 deletions(-)
-
 diff --git a/arch/x86/kvm/vmx.c b/arch/x86/kvm/vmx.c
-index ef16cf0..51d49d6 100644
+index a8b96dc4cd83..28942823cc3a 100644
 --- a/arch/x86/kvm/vmx.c
 +++ b/arch/x86/kvm/vmx.c
 @@ -34,6 +34,7 @@
@@ -19,32 +10,33 @@ index ef16cf0..51d49d6 100644
  #include "kvm_cache_regs.h"
  #include "x86.h"
  
-@@ -888,8 +889,11 @@ static const unsigned short vmcs_field_to_offset_table[] = {
+@@ -898,21 +899,18 @@ static const unsigned short vmcs_field_to_offset_table[] = {
+ 
  static inline short vmcs_field_to_offset(unsigned long field)
  {
- 	BUILD_BUG_ON(ARRAY_SIZE(vmcs_field_to_offset_table) > SHRT_MAX);
-+        const size_t size = ARRAY_SIZE(vmcs_field_to_offset_table);
-+        unsigned short offset;
+-	BUILD_BUG_ON(ARRAY_SIZE(vmcs_field_to_offset_table) > SHRT_MAX);
++	const size_t size = ARRAY_SIZE(vmcs_field_to_offset_table);
++	unsigned short offset;
  
 -	if (field >= ARRAY_SIZE(vmcs_field_to_offset_table))
-+        BUILD_BUG_ON(size > SHRT_MAX);
-+        if (field >= size)
++	BUILD_BUG_ON(size > SHRT_MAX);
++	if (field >= size)
  		return -ENOENT;
  
- 	/*
-@@ -901,7 +905,11 @@ static inline short vmcs_field_to_offset(unsigned long field)
- 	if (vmcs_field_to_offset_table[field] == 0)
+-	/*
+-	 * FIXME: Mitigation for CVE-2017-5753.  To be replaced with a
+-	 * generic mechanism.
+-	 */
+-	asm("lfence");
+-
+-	if (vmcs_field_to_offset_table[field] == 0)
++	field = array_index_nospec(field, size);
++	offset = vmcs_field_to_offset_table[field];
++	if (offset == 0)
  		return -ENOENT;
- 
+-
 -	return vmcs_field_to_offset_table[field];
-+        field = array_index_nospec(field, size);
-+        offset = vmcs_field_to_offset_table[field];
-+        if (offset == 0)
-+                return -ENOENT;
-+        return offset;
++	return offset;
  }
  
  static inline struct vmcs12 *get_vmcs12(struct kvm_vcpu *vcpu)
--- 
-2.9.5
-
