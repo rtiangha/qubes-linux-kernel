@@ -3,7 +3,7 @@ Qubes component: linux-kernel
 
 VERY experimental. Adds patches from the [Linux Hardened](https://github.com/copperhead/linux-hardened) project, plus various patches from the [LKML](https://patchwork.kernel.org/project/LKML/list/) that address the Meltdown/Spectre issue until official fixes are merged upstream (and maybe other issues too that are discovered over time). Could break at any moment (or not even compile??); provided as-is for anyone that wants to play around with it, with no guarantees of support. Will need a Retpoline enabled compiler to fully take advantage of all of the security features offered by Retpoline (Currently gcc 7.3 out now and 8.1 to be released in March).
 
-**Current Status**:  Retpoline patches are now included upstream. IBRS patches removed until upstream sorts out how they actually want to proceed with implementation. Proposed Spectre v1 mitigations from kernel 4.16 added. Boots and compiles successfully using a standard Fedora 25 build environment.
+**Current Status**:  Retpoline patches for Spectre v2 mitigations are now included upstream. Proposed IBRS/IBPB patches added. Proposed Spectre v1 mitigations from kernel 4.16 added. Compiles and boots successfully using a standard Fedora 25 build environment.
 
 **Backporting Retpoline-enabled GCC to Fedora 25**
 
@@ -73,11 +73,11 @@ Alternatively, you could download the src rpms and compile things yourself (that
 - In the Fedora 25 AppVM, install all RPMs using <code>sudo rpm -ivh --force *.rpm</code>. If complaints about missing system packages appear, make note of them, then in the Fedora 25 TemplateVM, install the Fedora 25 equivalents of the missing packages (<code> sudo dnf install *packagename*</code>). Then shut down the TemplateVM, reboot the AppVM, and then try installing the new rpms again. Keep repeating until the backported rpms install cleanly.
 - Verify that your AppVM is now using the new 7.3 version of gcc by running <code> gcc -v </code>.
 - Once done, run <code>make rpms</code> in the kernel build directory and the build process will use the new Retpoline-enabled gcc compiler instead of the standard Fedora 25 version. To make the compiler changes permanent, install the backported rpms into the TemplateVM instead of the AppVM.
-- You can verify that Spectre v1 mitigations and Retpoline protection for Spectre v2 is fully enabled by running:
+- You can verify that Spectre v1 mitigations and Retpoline protection for Spectre v2 are applied by running:
 ```
 grep . /sys/devices/system/cpu/vulnerabilities/spectre*
 ```
-in dom0 or VM. The output should look something like this:
+in dom0 or VM. On a Sandy Bridge system, the output looks something like this (Spectre v2 display output may depend on your CPU):
 ```
 user@disp1:~$ grep . /sys/devices/system/cpu/vulnerabilities/spectre*
 /sys/devices/system/cpu/vulnerabilities/spectre_v1:Mitigation: __user pointer sanitization
