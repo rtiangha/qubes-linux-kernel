@@ -54,7 +54,7 @@ index 694968c7523c..002d86416ef8 100644
  
  The value in this file affects behavior of handling NMI. When the
 diff --git a/Makefile b/Makefile
-index 90a4bffa8446..dfa8251a4265 100644
+index 7ed993896dd5..333638fcc56b 100644
 --- a/Makefile
 +++ b/Makefile
 @@ -675,6 +675,10 @@ ifneq ($(CONFIG_FRAME_WARN),0)
@@ -724,7 +724,7 @@ index cc2b4d9433ed..485582093011 100644
  	  A pseudo terminal (PTY) is a software device consisting of two
  	  halves: a master and a slave. The slave device behaves identical to
 diff --git a/drivers/tty/tty_io.c b/drivers/tty/tty_io.c
-index 94cccb6efa32..882110a69b68 100644
+index 7892d0be8af9..49f9d831532e 100644
 --- a/drivers/tty/tty_io.c
 +++ b/drivers/tty/tty_io.c
 @@ -171,6 +171,7 @@ static void free_tty_struct(struct tty_struct *tty)
@@ -735,7 +735,7 @@ index 94cccb6efa32..882110a69b68 100644
  	kfree(tty);
  }
  
-@@ -2137,11 +2138,19 @@ static int tty_fasync(int fd, struct file *filp, int on)
+@@ -2143,11 +2144,19 @@ static int tty_fasync(int fd, struct file *filp, int on)
   *	FIXME: may race normal receive processing
   */
  
@@ -755,7 +755,7 @@ index 94cccb6efa32..882110a69b68 100644
  	if ((current->signal->tty != tty) && !capable(CAP_SYS_ADMIN))
  		return -EPERM;
  	if (get_user(ch, p))
-@@ -2821,6 +2830,7 @@ struct tty_struct *alloc_tty_struct(struct tty_driver *driver, int idx)
+@@ -2827,6 +2836,7 @@ struct tty_struct *alloc_tty_struct(struct tty_driver *driver, int idx)
  	tty->index = idx;
  	tty_line_name(driver, idx, tty->name);
  	tty->dev = tty_get_device(tty);
@@ -1249,7 +1249,7 @@ index cfd83eb2f926..b9ecb42c762d 100644
  		return __builtin_strcpy(p, q);
  	memcpy(p, q, strlen(q) + 1);
 diff --git a/include/linux/tty.h b/include/linux/tty.h
-index 7ac8ba208b1f..c18026235c46 100644
+index 0a6c71e0ad01..e992315170a2 100644
 --- a/include/linux/tty.h
 +++ b/include/linux/tty.h
 @@ -13,6 +13,7 @@
@@ -1463,7 +1463,7 @@ index 1e1c0236f55b..452062fe45ce 100644
  
  /**
 diff --git a/kernel/events/core.c b/kernel/events/core.c
-index 24ebad5567b4..ca864d5a4934 100644
+index 8c20af8738ac..f37ff6c46cc9 100644
 --- a/kernel/events/core.c
 +++ b/kernel/events/core.c
 @@ -397,8 +397,13 @@ static cpumask_var_t perf_online_mask;
@@ -1480,7 +1480,7 @@ index 24ebad5567b4..ca864d5a4934 100644
  
  /* Minimum for 512 kiB + 1 user control page */
  int sysctl_perf_event_mlock __read_mostly = 512 + (PAGE_SIZE / 1024); /* 'free' kiB per user */
-@@ -9929,6 +9934,9 @@ SYSCALL_DEFINE5(perf_event_open,
+@@ -9930,6 +9935,9 @@ SYSCALL_DEFINE5(perf_event_open,
  	if (flags & ~PERF_FLAG_ALL)
  		return -EINVAL;
  
