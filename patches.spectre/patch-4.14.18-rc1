@@ -107,21 +107,6 @@ index 000000000000..e9e6cbae2841
 +			return array[index];
 +		}
 +	}
-diff --git a/Makefile b/Makefile
-index 7ed993896dd5..bd048b52579b 100644
---- a/Makefile
-+++ b/Makefile
-@@ -1,8 +1,8 @@
- # SPDX-License-Identifier: GPL-2.0
- VERSION = 4
- PATCHLEVEL = 14
--SUBLEVEL = 17
--EXTRAVERSION =
-+SUBLEVEL = 18
-+EXTRAVERSION = -rc1
- NAME = Petit Gorille
- 
- # *DOCUMENTATION*
 diff --git a/arch/powerpc/Kconfig b/arch/powerpc/Kconfig
 index cb782ac1c35d..fe418226df7f 100644
 --- a/arch/powerpc/Kconfig
