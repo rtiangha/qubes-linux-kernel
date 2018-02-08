@@ -1,8 +1,8 @@
 diff --git a/Documentation/admin-guide/kernel-parameters.txt b/Documentation/admin-guide/kernel-parameters.txt
-index 8122b5f98ea1..3657bde6a79b 100644
+index c76afdcafbef..a03b58ecafc8 100644
 --- a/Documentation/admin-guide/kernel-parameters.txt
 +++ b/Documentation/admin-guide/kernel-parameters.txt
-@@ -2902,6 +2902,11 @@
+@@ -2900,6 +2900,11 @@
  			the specified number of seconds.  This is to be used if
  			your oopses keep scrolling off the screen.
  
@@ -54,7 +54,7 @@ index 694968c7523c..002d86416ef8 100644
  
  The value in this file affects behavior of handling NMI. When the
 diff --git a/Makefile b/Makefile
-index 7ed993896dd5..333638fcc56b 100644
+index a69e5da9ed86..e6de31fe1ec9 100644
 --- a/Makefile
 +++ b/Makefile
 @@ -675,6 +675,10 @@ ifneq ($(CONFIG_FRAME_WARN),0)
@@ -333,10 +333,10 @@ index 3a091cea36c5..0931c05a3348 100644
 -extern unsigned long align_vdso_addr(unsigned long);
  #endif /* _ASM_X86_ELF_H */
 diff --git a/arch/x86/include/asm/tlbflush.h b/arch/x86/include/asm/tlbflush.h
-index 3effd3c994af..7bcd92e9f8e4 100644
+index 4405c4b308e8..0beccb5e4176 100644
 --- a/arch/x86/include/asm/tlbflush.h
 +++ b/arch/x86/include/asm/tlbflush.h
-@@ -251,6 +251,7 @@ static inline void cr4_set_bits(unsigned long mask)
+@@ -253,6 +253,7 @@ static inline void cr4_set_bits(unsigned long mask)
  	unsigned long cr4;
  
  	cr4 = this_cpu_read(cpu_tlbstate.cr4);
@@ -344,7 +344,7 @@ index 3effd3c994af..7bcd92e9f8e4 100644
  	if ((cr4 | mask) != cr4) {
  		cr4 |= mask;
  		this_cpu_write(cpu_tlbstate.cr4, cr4);
-@@ -264,6 +265,7 @@ static inline void cr4_clear_bits(unsigned long mask)
+@@ -266,6 +267,7 @@ static inline void cr4_clear_bits(unsigned long mask)
  	unsigned long cr4;
  
  	cr4 = this_cpu_read(cpu_tlbstate.cr4);
@@ -352,7 +352,7 @@ index 3effd3c994af..7bcd92e9f8e4 100644
  	if ((cr4 & ~mask) != cr4) {
  		cr4 &= ~mask;
  		this_cpu_write(cpu_tlbstate.cr4, cr4);
-@@ -276,6 +278,7 @@ static inline void cr4_toggle_bits(unsigned long mask)
+@@ -278,6 +280,7 @@ static inline void cr4_toggle_bits(unsigned long mask)
  	unsigned long cr4;
  
  	cr4 = this_cpu_read(cpu_tlbstate.cr4);
@@ -360,7 +360,7 @@ index 3effd3c994af..7bcd92e9f8e4 100644
  	cr4 ^= mask;
  	this_cpu_write(cpu_tlbstate.cr4, cr4);
  	__write_cr4(cr4);
-@@ -384,6 +387,7 @@ static inline void __native_flush_tlb_global(void)
+@@ -386,6 +389,7 @@ static inline void __native_flush_tlb_global(void)
  	raw_local_irq_save(flags);
  
  	cr4 = this_cpu_read(cpu_tlbstate.cr4);
@@ -369,10 +369,10 @@ index 3effd3c994af..7bcd92e9f8e4 100644
  	native_write_cr4(cr4 ^ X86_CR4_PGE);
  	/* write old PGE again and flush TLBs */
 diff --git a/arch/x86/kernel/cpu/common.c b/arch/x86/kernel/cpu/common.c
-index 372ba3fb400f..10a857c3581b 100644
+index 92b66e21bae5..1de3321da1ef 100644
 --- a/arch/x86/kernel/cpu/common.c
 +++ b/arch/x86/kernel/cpu/common.c
-@@ -1532,7 +1532,6 @@ void cpu_init(void)
+@@ -1592,7 +1592,6 @@ void cpu_init(void)
  	wrmsrl(MSR_KERNEL_GS_BASE, 0);
  	barrier();
  
@@ -2488,7 +2488,7 @@ index f48fe6fc7e8c..d78c52835c08 100644
  	  Normal TCP/IP networking is open to an attack known as "SYN
  	  flooding". This denial-of-service attack prevents legitimate remote
 diff --git a/scripts/mod/modpost.c b/scripts/mod/modpost.c
-index 98314b400a95..8f238f4f8fdd 100644
+index 54deaa1066cf..211f97bd5ee3 100644
 --- a/scripts/mod/modpost.c
 +++ b/scripts/mod/modpost.c
 @@ -37,6 +37,7 @@ static int vmlinux_section_warnings = 1;
@@ -2561,7 +2561,7 @@ index 98314b400a95..8f238f4f8fdd 100644
  	}
  	fprintf(stderr, "\n");
  }
-@@ -2530,6 +2550,14 @@ int main(int argc, char **argv)
+@@ -2539,6 +2559,14 @@ int main(int argc, char **argv)
  		}
  	}
  	free(buf.p);
