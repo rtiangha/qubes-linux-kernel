@@ -3,7 +3,7 @@ Qubes component: linux-kernel
 
 VERY experimental. Adds patches from the [Linux Hardened](https://github.com/copperhead/linux-hardened) project, plus various patches from the [LKML](https://patchwork.kernel.org/project/LKML/list/) that address the Meltdown/Spectre issue until official fixes are merged upstream (and maybe other issues too that are discovered over time). Could break at any moment (or not even compile??); provided as-is for anyone that wants to play around with it, with no guarantees of support. Will need a Retpoline enabled compiler to fully take advantage of all of the security features offered by Retpoline (Currently gcc 7.3 out now and 8.1 to be released in March).
 
-**Current Status**:  Retpoline patches for Spectre v2 mitigations are now included upstream. Proposed PTI updates from kernel 4.16 including Spectre v1 mitigations are now added. Compiles and boots successfully using a standard Fedora 25 build environment.
+**Current Status**:  All known Meltdown/Spectre mitigations up to the date of this writing were merged upstream into Kernel 4.14.18 (and 4.15.2) including Spectre v1 mitigations and Retpoline and IBRS/IBPB support for Spectre v2. Compiles and boots successfully using a standard Fedora 25 build environment.
 
 **Backporting Retpoline-enabled GCC to Fedora 25**
 
