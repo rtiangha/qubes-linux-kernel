@@ -54,20 +54,19 @@ index 694968c7523c..002d86416ef8 100644
  
  The value in this file affects behavior of handling NMI. When the
 diff --git a/Makefile b/Makefile
-index a69e5da9ed86..e6de31fe1ec9 100644
+index 76a0b13623f4..f2fe874f5e86 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -675,6 +675,10 @@ ifneq ($(CONFIG_FRAME_WARN),0)
- KBUILD_CFLAGS += $(call cc-option,-Wframe-larger-than=${CONFIG_FRAME_WARN})
- endif
+@@ -698,6 +698,9 @@ endif
+ KBUILD_CFLAGS += $(stackp-flag)
  
+ ifeq ($(cc-name),clang)
 +ifdef CONFIG_LOCAL_SANITIZE
 +KBUILD_CFLAGS   += -fsanitize=local-sanitize
 +endif
-+
- # This selects the stack protector compiler flag. Testing it is delayed
- # until after .config has been reprocessed, in the prepare-compiler-check
- # target.
+ ifneq ($(CROSS_COMPILE),)
+ CLANG_TARGET	:= --target=$(notdir $(CROSS_COMPILE:%-=%))
+ GCC_TOOLCHAIN	:= $(realpath $(dir $(shell which $(LD)))/..)
 diff --git a/arch/Kconfig b/arch/Kconfig
 index 400b9e1b2f27..4637096f7902 100644
 --- a/arch/Kconfig
@@ -2577,7 +2576,7 @@ index 54deaa1066cf..211f97bd5ee3 100644
  	return err;
  }
 diff --git a/security/Kconfig b/security/Kconfig
-index b5c2b5d0c6c0..a13b1a632269 100644
+index b5c2b5d0c6c0..c6a013a17c77 100644
 --- a/security/Kconfig
 +++ b/security/Kconfig
 @@ -8,7 +8,7 @@ source security/keys/Kconfig
@@ -2627,7 +2626,7 @@ index b5c2b5d0c6c0..a13b1a632269 100644
  	help
  	  This option checks for obviously wrong memory regions when
  	  copying memory to/from the kernel (via copy_to_user() and
-@@ -177,10 +201,34 @@ config HARDENED_USERCOPY_PAGESPAN
+@@ -177,10 +201,36 @@ config HARDENED_USERCOPY_PAGESPAN
  config FORTIFY_SOURCE
  	bool "Harden common str/mem functions against buffer overflows"
  	depends on ARCH_HAS_FORTIFY_SOURCE
@@ -2643,6 +2642,8 @@ index b5c2b5d0c6c0..a13b1a632269 100644
 +	help
 +	  Perform stricter overflow checks catching overflows within objects
 +	  for common C string functions rather than only between objects.
++
++	  This is not yet intended for production use, only bug finding.
 +
 +config PAGE_SANITIZE
 +	bool "Sanitize pages"
