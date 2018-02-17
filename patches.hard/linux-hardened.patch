@@ -54,10 +54,10 @@ index 694968c7523c..002d86416ef8 100644
  
  The value in this file affects behavior of handling NMI. When the
 diff --git a/Makefile b/Makefile
-index 76a0b13623f4..f2fe874f5e86 100644
+index 33176140f133..3963d44c6436 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -698,6 +698,9 @@ endif
+@@ -699,6 +699,9 @@ endif
  KBUILD_CFLAGS += $(stackp-flag)
  
  ifeq ($(cc-name),clang)
@@ -162,10 +162,10 @@ index 33be513ef24c..6f0c0e3ef0dd 100644
  
  #ifdef __AARCH64EB__
 diff --git a/arch/arm64/kernel/process.c b/arch/arm64/kernel/process.c
-index bcd22d7ee590..3b4bb8d4db90 100644
+index 9e773732520c..91359f45b5fc 100644
 --- a/arch/arm64/kernel/process.c
 +++ b/arch/arm64/kernel/process.c
-@@ -421,9 +421,9 @@ unsigned long arch_align_stack(unsigned long sp)
+@@ -419,9 +419,9 @@ unsigned long arch_align_stack(unsigned long sp)
  unsigned long arch_randomize_brk(struct mm_struct *mm)
  {
  	if (is_compat_task())
@@ -834,7 +834,7 @@ index 5f93cfacb3d1..cea0d7d3b23e 100644
  	select CRC32
 -	default y
 diff --git a/fs/pipe.c b/fs/pipe.c
-index f0f4ab36c444..35f4fb95858b 100644
+index 8ef7d7bef775..b82f305ec13d 100644
 --- a/fs/pipe.c
 +++ b/fs/pipe.c
 @@ -38,7 +38,7 @@ unsigned int pipe_max_size = 1048576;
@@ -1840,7 +1840,7 @@ index c490f1e4313b..dd03bd39d7bf 100644
  static DEFINE_MUTEX(userns_state_mutex);
  
 diff --git a/lib/Kconfig.debug b/lib/Kconfig.debug
-index ff21b4dbb392..2321cbcf0bd9 100644
+index 00cb02daeddd..ffd4e0aa769a 100644
 --- a/lib/Kconfig.debug
 +++ b/lib/Kconfig.debug
 @@ -939,6 +939,7 @@ endmenu # "Debug lockups and hangs"
