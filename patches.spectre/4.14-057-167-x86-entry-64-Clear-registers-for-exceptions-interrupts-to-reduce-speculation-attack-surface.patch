@@ -1,8 +1,6 @@
-diff --git a/arch/x86/entry/calling.h b/arch/x86/entry/calling.h
-index 3f48f69..f4b129d 100644
 --- a/arch/x86/entry/calling.h
 +++ b/arch/x86/entry/calling.h
-@@ -147,6 +147,25 @@ For 32-bit we have the following conventions - kernel is built with
+@@ -147,6 +147,25 @@ For 32-bit we have the following convent
  	UNWIND_HINT_REGS offset=\offset
  	.endm
  
@@ -28,11 +26,9 @@ index 3f48f69..f4b129d 100644
  	.macro POP_EXTRA_REGS
  	popq %r15
  	popq %r14
-diff --git a/arch/x86/entry/entry_64.S b/arch/x86/entry/entry_64.S
-index 065a71b..9e48002 100644
 --- a/arch/x86/entry/entry_64.S
 +++ b/arch/x86/entry/entry_64.S
-@@ -575,6 +575,7 @@ END(irq_entries_start)
+@@ -571,6 +571,7 @@ END(irq_entries_start)
  	ALLOC_PT_GPREGS_ON_STACK
  	SAVE_C_REGS
  	SAVE_EXTRA_REGS
@@ -40,7 +36,7 @@ index 065a71b..9e48002 100644
  	ENCODE_FRAME_POINTER
  
  	testb	$3, CS(%rsp)
-@@ -1133,6 +1134,7 @@ ENTRY(xen_failsafe_callback)
+@@ -1127,6 +1128,7 @@ ENTRY(xen_failsafe_callback)
  	ALLOC_PT_GPREGS_ON_STACK
  	SAVE_C_REGS
  	SAVE_EXTRA_REGS
@@ -48,7 +44,7 @@ index 065a71b..9e48002 100644
  	ENCODE_FRAME_POINTER
  	jmp	error_exit
  END(xen_failsafe_callback)
-@@ -1178,6 +1180,7 @@ ENTRY(paranoid_entry)
+@@ -1172,6 +1174,7 @@ ENTRY(paranoid_entry)
  	cld
  	SAVE_C_REGS 8
  	SAVE_EXTRA_REGS 8
@@ -56,7 +52,7 @@ index 065a71b..9e48002 100644
  	ENCODE_FRAME_POINTER 8
  	movl	$1, %ebx
  	movl	$MSR_GS_BASE, %ecx
-@@ -1230,8 +1233,8 @@ ENTRY(error_entry)
+@@ -1224,8 +1227,8 @@ ENTRY(error_entry)
  	cld
  	SAVE_C_REGS 8
  	SAVE_EXTRA_REGS 8
@@ -66,7 +62,7 @@ index 065a71b..9e48002 100644
  	testb	$3, CS+8(%rsp)
  	jz	.Lerror_kernelspace
  
-@@ -1428,6 +1431,7 @@ ENTRY(nmi)
+@@ -1422,6 +1425,7 @@ ENTRY(nmi)
  	pushq	%r14		/* pt_regs->r14 */
  	pushq	%r15		/* pt_regs->r15 */
  	UNWIND_HINT_REGS

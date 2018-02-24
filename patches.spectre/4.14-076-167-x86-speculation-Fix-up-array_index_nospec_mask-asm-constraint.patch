@@ -1,8 +1,6 @@
-diff --git a/arch/x86/include/asm/barrier.h b/arch/x86/include/asm/barrier.h
-index 30d4061..e1259f0 100644
 --- a/arch/x86/include/asm/barrier.h
 +++ b/arch/x86/include/asm/barrier.h
-@@ -40,7 +40,7 @@ static inline unsigned long array_index_mask_nospec(unsigned long index,
+@@ -40,7 +40,7 @@ static inline unsigned long array_index_
  
  	asm ("cmp %1,%2; sbb %0,%0;"
  			:"=r" (mask)

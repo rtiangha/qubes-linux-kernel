@@ -1,0 +1,10 @@
+--- a/arch/x86/include/asm/nospec-branch.h
++++ b/arch/x86/include/asm/nospec-branch.h
+@@ -6,6 +6,7 @@
+ #include <asm/alternative.h>
+ #include <asm/alternative-asm.h>
+ #include <asm/cpufeatures.h>
++#include <asm/msr-index.h>
+ 
+ #ifdef __ASSEMBLY__
+ 

@@ -1,8 +1,6 @@
-diff --git a/include/linux/nospec.h b/include/linux/nospec.h
-index b99bced..fbc98e2 100644
 --- a/include/linux/nospec.h
 +++ b/include/linux/nospec.h
-@@ -20,20 +20,6 @@ static inline unsigned long array_index_mask_nospec(unsigned long index,
+@@ -20,20 +20,6 @@ static inline unsigned long array_index_
  						    unsigned long size)
  {
  	/*
@@ -23,7 +21,7 @@ index b99bced..fbc98e2 100644
  	 * Always calculate and emit the mask even if the compiler
  	 * thinks the mask is not needed. The compiler does not take
  	 * into account the value of @index under speculation.
-@@ -44,6 +30,26 @@ static inline unsigned long array_index_mask_nospec(unsigned long index,
+@@ -44,6 +30,26 @@ static inline unsigned long array_index_
  #endif
  
  /*
@@ -50,7 +48,7 @@ index b99bced..fbc98e2 100644
   * array_index_nospec - sanitize an array index after a bounds check
   *
   * For a code sequence like:
-@@ -61,7 +67,7 @@ static inline unsigned long array_index_mask_nospec(unsigned long index,
+@@ -61,7 +67,7 @@ static inline unsigned long array_index_
  ({									\
  	typeof(index) _i = (index);					\
  	typeof(size) _s = (size);					\

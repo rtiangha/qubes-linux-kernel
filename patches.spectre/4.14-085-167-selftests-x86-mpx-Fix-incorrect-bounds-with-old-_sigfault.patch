@@ -1,8 +1,6 @@
-diff --git a/tools/testing/selftests/x86/mpx-mini-test.c b/tools/testing/selftests/x86/mpx-mini-test.c
-index ec0f6b4..9c0325e 100644
 --- a/tools/testing/selftests/x86/mpx-mini-test.c
 +++ b/tools/testing/selftests/x86/mpx-mini-test.c
-@@ -315,11 +315,39 @@ static inline void *__si_bounds_upper(siginfo_t *si)
+@@ -315,11 +315,39 @@ static inline void *__si_bounds_upper(si
  	return si->si_upper;
  }
  #else
@@ -43,7 +41,7 @@ index ec0f6b4..9c0325e 100644
  
  	return __si_lower;
  }
-@@ -331,7 +359,7 @@ static inline void *__si_bounds_lower(siginfo_t *si)
+@@ -331,7 +359,7 @@ static inline void *__si_bounds_lower(si
  
  static inline void *__si_bounds_upper(siginfo_t *si)
  {

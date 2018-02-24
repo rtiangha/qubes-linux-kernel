@@ -1,0 +1,13 @@
+--- a/arch/x86/entry/calling.h
++++ b/arch/x86/entry/calling.h
+@@ -159,10 +159,6 @@ For 32-bit we have the following convent
+ 	.if \pop_rdi
+ 	popq %rdi
+ 	.endif
+-	.endm
+-
+-	.macro icebp
+-	.byte 0xf1
+ .endm
+ 
+ /*

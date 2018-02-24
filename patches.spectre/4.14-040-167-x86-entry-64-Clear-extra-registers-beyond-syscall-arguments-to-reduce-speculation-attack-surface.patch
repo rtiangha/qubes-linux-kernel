@@ -1,8 +1,6 @@
-diff --git a/arch/x86/entry/entry_64.S b/arch/x86/entry/entry_64.S
-index c752abe..065a71b 100644
 --- a/arch/x86/entry/entry_64.S
 +++ b/arch/x86/entry/entry_64.S
-@@ -235,13 +235,26 @@ GLOBAL(entry_SYSCALL_64_after_hwframe)
+@@ -231,13 +231,26 @@ GLOBAL(entry_SYSCALL_64_after_hwframe)
  	pushq	%r8				/* pt_regs->r8 */
  	pushq	%r9				/* pt_regs->r9 */
  	pushq	%r10				/* pt_regs->r10 */
