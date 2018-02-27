@@ -1,0 +1,12 @@
+diff --git a/include/linux/nospec.h b/include/linux/nospec.h
+index 172a19d..e791ebc 100644
+--- a/include/linux/nospec.h
++++ b/include/linux/nospec.h
+@@ -5,6 +5,7 @@
+ 
+ #ifndef _LINUX_NOSPEC_H
+ #define _LINUX_NOSPEC_H
++#include <asm/barrier.h>
+ 
+ /**
+  * array_index_mask_nospec() - generate a ~0 mask when index < size, 0 otherwise

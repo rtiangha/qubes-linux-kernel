@@ -1,0 +1,26 @@
+diff --git a/arch/x86/kvm/svm.c b/arch/x86/kvm/svm.c
+index 1598beeda11c..24c9521ebc24 100644
+--- a/arch/x86/kvm/svm.c
++++ b/arch/x86/kvm/svm.c
+@@ -5465,7 +5465,7 @@ static void svm_vcpu_run(struct kvm_vcpu *vcpu)
+ 	 * If the L02 MSR bitmap does not intercept the MSR, then we need to
+ 	 * save it.
+ 	 */
+-	if (!msr_write_intercepted(vcpu, MSR_IA32_SPEC_CTRL))
++	if (unlikely(!msr_write_intercepted(vcpu, MSR_IA32_SPEC_CTRL)))
+ 		svm->spec_ctrl = native_read_msr(MSR_IA32_SPEC_CTRL);
+ 
+ 	if (svm->spec_ctrl)
+diff --git a/arch/x86/kvm/vmx.c b/arch/x86/kvm/vmx.c
+index 0927be315965..7f8401d05939 100644
+--- a/arch/x86/kvm/vmx.c
++++ b/arch/x86/kvm/vmx.c
+@@ -9588,7 +9588,7 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
+ 	 * If the L02 MSR bitmap does not intercept the MSR, then we need to
+ 	 * save it.
+ 	 */
+-	if (!msr_write_intercepted(vcpu, MSR_IA32_SPEC_CTRL))
++	if (unlikely(!msr_write_intercepted(vcpu, MSR_IA32_SPEC_CTRL)))
+ 		vmx->spec_ctrl = native_read_msr(MSR_IA32_SPEC_CTRL);
+ 
+ 	if (vmx->spec_ctrl)

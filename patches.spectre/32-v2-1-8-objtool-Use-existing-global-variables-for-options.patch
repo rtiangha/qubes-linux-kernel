@@ -1,0 +1,96 @@
+--- a/tools/objtool/builtin-check.c
++++ b/tools/objtool/builtin-check.c
+@@ -53,5 +53,5 @@ int cmd_check(int argc, const char **arg
+ 
+ 	objname = argv[0];
+ 
+-	return check(objname, no_fp, no_unreachable, false);
++	return check(objname, false);
+ }
+--- a/tools/objtool/builtin-orc.c
++++ b/tools/objtool/builtin-orc.c
+@@ -25,7 +25,6 @@
+  */
+ 
+ #include <string.h>
+-#include <subcmd/parse-options.h>
+ #include "builtin.h"
+ #include "check.h"
+ 
+@@ -36,9 +35,6 @@ static const char *orc_usage[] = {
+ 	NULL,
+ };
+ 
+-extern const struct option check_options[];
+-extern bool no_fp, no_unreachable;
+-
+ int cmd_orc(int argc, const char **argv)
+ {
+ 	const char *objname;
+@@ -54,7 +50,7 @@ int cmd_orc(int argc, const char **argv)
+ 
+ 		objname = argv[0];
+ 
+-		return check(objname, no_fp, no_unreachable, true);
++		return check(objname, true);
+ 	}
+ 
+ 	if (!strcmp(argv[0], "dump")) {
+--- a/tools/objtool/builtin.h
++++ b/tools/objtool/builtin.h
+@@ -17,6 +17,11 @@
+ #ifndef _BUILTIN_H
+ #define _BUILTIN_H
+ 
++#include <subcmd/parse-options.h>
++
++extern const struct option check_options[];
++extern bool no_fp, no_unreachable;
++
+ extern int cmd_check(int argc, const char **argv);
+ extern int cmd_orc(int argc, const char **argv);
+ 
+--- a/tools/objtool/check.c
++++ b/tools/objtool/check.c
+@@ -18,6 +18,7 @@
+ #include <string.h>
+ #include <stdlib.h>
+ 
++#include "builtin.h"
+ #include "check.h"
+ #include "elf.h"
+ #include "special.h"
+@@ -33,7 +34,6 @@ struct alternative {
+ };
+ 
+ const char *objname;
+-static bool no_fp;
+ struct cfi_state initial_func_cfi;
+ 
+ struct instruction *find_insn(struct objtool_file *file,
+@@ -1978,13 +1978,12 @@ static void cleanup(struct objtool_file
+ 	elf_close(file->elf);
+ }
+ 
+-int check(const char *_objname, bool _no_fp, bool no_unreachable, bool orc)
++int check(const char *_objname, bool orc)
+ {
+ 	struct objtool_file file;
+ 	int ret, warnings = 0;
+ 
+ 	objname = _objname;
+-	no_fp = _no_fp;
+ 
+ 	file.elf = elf_open(objname, orc ? O_RDWR : O_RDONLY);
+ 	if (!file.elf)
+--- a/tools/objtool/check.h
++++ b/tools/objtool/check.h
+@@ -62,7 +62,7 @@ struct objtool_file {
+ 	bool ignore_unreachables, c_file, hints;
+ };
+ 
+-int check(const char *objname, bool no_fp, bool no_unreachable, bool orc);
++int check(const char *objname, bool orc);
+ 
+ struct instruction *find_insn(struct objtool_file *file,
+ 			      struct section *sec, unsigned long offset);

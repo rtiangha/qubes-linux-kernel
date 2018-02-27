@@ -1,0 +1,13 @@
+diff --git a/include/linux/nospec.h b/include/linux/nospec.h
+index d6701e3..172a19d 100644
+--- a/include/linux/nospec.h
++++ b/include/linux/nospec.h
+@@ -52,7 +52,6 @@ static inline unsigned long array_index_mask_nospec(unsigned long index,
+ 	BUILD_BUG_ON(sizeof(_i) > sizeof(long));			\
+ 	BUILD_BUG_ON(sizeof(_s) > sizeof(long));			\
+ 									\
+-	_i &= _mask;							\
+-	_i;								\
++	(typeof(_i)) (_i & _mask);					\
+ })
+ #endif /* _LINUX_NOSPEC_H */

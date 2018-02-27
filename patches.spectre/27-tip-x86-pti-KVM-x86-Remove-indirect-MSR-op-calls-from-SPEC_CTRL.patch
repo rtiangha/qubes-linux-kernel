@@ -1,0 +1,68 @@
+diff --git a/arch/x86/kvm/svm.c b/arch/x86/kvm/svm.c
+index b3e488a74828..1598beeda11c 100644
+--- a/arch/x86/kvm/svm.c
++++ b/arch/x86/kvm/svm.c
+@@ -49,6 +49,7 @@
+ #include <asm/debugreg.h>
+ #include <asm/kvm_para.h>
+ #include <asm/irq_remapping.h>
++#include <asm/microcode.h>
+ #include <asm/nospec-branch.h>
+ 
+ #include <asm/virtext.h>
+@@ -5355,7 +5356,7 @@ static void svm_vcpu_run(struct kvm_vcpu *vcpu)
+ 	 * being speculatively taken.
+ 	 */
+ 	if (svm->spec_ctrl)
+-		wrmsrl(MSR_IA32_SPEC_CTRL, svm->spec_ctrl);
++		native_wrmsrl(MSR_IA32_SPEC_CTRL, svm->spec_ctrl);
+ 
+ 	asm volatile (
+ 		"push %%" _ASM_BP "; \n\t"
+@@ -5465,10 +5466,10 @@ static void svm_vcpu_run(struct kvm_vcpu *vcpu)
+ 	 * save it.
+ 	 */
+ 	if (!msr_write_intercepted(vcpu, MSR_IA32_SPEC_CTRL))
+-		rdmsrl(MSR_IA32_SPEC_CTRL, svm->spec_ctrl);
++		svm->spec_ctrl = native_read_msr(MSR_IA32_SPEC_CTRL);
+ 
+ 	if (svm->spec_ctrl)
+-		wrmsrl(MSR_IA32_SPEC_CTRL, 0);
++		native_wrmsrl(MSR_IA32_SPEC_CTRL, 0);
+ 
+ 	/* Eliminate branch target predictions from guest mode */
+ 	vmexit_fill_RSB();
+diff --git a/arch/x86/kvm/vmx.c b/arch/x86/kvm/vmx.c
+index 3dec126aa302..0927be315965 100644
+--- a/arch/x86/kvm/vmx.c
++++ b/arch/x86/kvm/vmx.c
+@@ -51,6 +51,7 @@
+ #include <asm/apic.h>
+ #include <asm/irq_remapping.h>
+ #include <asm/mmu_context.h>
++#include <asm/microcode.h>
+ #include <asm/nospec-branch.h>
+ 
+ #include "trace.h"
+@@ -9452,7 +9453,7 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
+ 	 * being speculatively taken.
+ 	 */
+ 	if (vmx->spec_ctrl)
+-		wrmsrl(MSR_IA32_SPEC_CTRL, vmx->spec_ctrl);
++		native_wrmsrl(MSR_IA32_SPEC_CTRL, vmx->spec_ctrl);
+ 
+ 	vmx->__launched = vmx->loaded_vmcs->launched;
+ 	asm(
+@@ -9588,10 +9589,10 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
+ 	 * save it.
+ 	 */
+ 	if (!msr_write_intercepted(vcpu, MSR_IA32_SPEC_CTRL))
+-		rdmsrl(MSR_IA32_SPEC_CTRL, vmx->spec_ctrl);
++		vmx->spec_ctrl = native_read_msr(MSR_IA32_SPEC_CTRL);
+ 
+ 	if (vmx->spec_ctrl)
+-		wrmsrl(MSR_IA32_SPEC_CTRL, 0);
++		native_wrmsrl(MSR_IA32_SPEC_CTRL, 0);
+ 
+ 	/* Eliminate branch target predictions from guest mode */
+ 	vmexit_fill_RSB();
